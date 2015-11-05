@@ -3,7 +3,7 @@ import keras.layers.core as CORE
 import keras.layers.convolutional as CONV
 import keras.optimizers as OPT
 import keras.models as MODELS
-import keras.recurrent as RECURRENT
+import keras.layers.recurrent as RECURRENT
 
 import theano as T
 import theano.tensor as TT
@@ -20,8 +20,8 @@ import sys
 
 print 'Building model'
 
-seq_len = 5
-prev_frames = 4
+seq_len = 20
+#prev_frames = 4
 image_size = 100
 batch_size = 16
 epoch_size = 2000
@@ -46,8 +46,11 @@ fc1_act = 'tanh'
 
 fc2_act = 'tanh'
 
-figure_name = 'loss'
+gru1_size=50
 
+figure_name = 'rec_loss'
+
+'''
 try:
 	opts, args = getopt(sys.argv[1:], "", ["no-conv1", "no-pool1", "conv1_filters=", "conv1_filter_size=", "conv1_act=", "pool1_size=", "conv1_stride=", "fc1_act=", "fc2_act="])
 	for opt in opts:
@@ -73,29 +76,34 @@ try:
 		figure_name = args[0]
 except:
 	pass
-
+'''
+#modify the Reshape in keras to Theano.reshape, that means reshape all dim include batch dim
+#Keras use None at batch dim, the loc_act and re2 is necessary 
+#PS. keras'reshape can't use at input, the loc_fc is necessary 
 model = MODELS.Graph()
-model.add_input(name='img_in', ndim=3)
-model.add_input(name='loc_in', ndim=3)
-model.add_node(CONV.Convolution2D(conv1_filters, conv1_filter_size, conv1_filter_size, subsample=(conv1_stride,conv1_stride), border_mode='valid', input_shape=(prev_frames, image_size, image_size)),name='conv1', input='img_in')
+model.add_input(name='img_in', input_shape=(1, 100, 100))
+model.add_input(name='loc_in', input_shape=(seq_len-1, 4))
+model.add_node(CORE.TimeDistributedDense(10), name='loc_fc', input='loc_in')
+model.add_node(CORE.Activation('tanh'), name='loc_act', input='loc_fc')
+model.add_node(CORE.Reshape(dims=(batch_size, seq_len-1, 10)), name='re2', input='loc_act')
+#model.add_node(CORE.Reshape(dims=(100, 100)), name='re1', input='img_in')
+model.add_node(CONV.Convolution2D(conv1_filters, conv1_filter_size, conv1_filter_size, subsample=(conv1_stride,conv1_stride), border_mode='valid', input_shape=(1, image_size, image_size)),name='conv1', input='img_in')
 model.add_node(CONV.MaxPooling2D(pool_size=(pool1_size, pool1_size)), name='pool1', input='conv1')
 model.add_node(CORE.Activation(conv1_act), name='act1', input='pool1')
-#model.add(CONV.Convolution2D(conv2_filters, conv2_filter_size, conv2_filter_size, border_mode='valid'))
-#model.add(CONV.MaxPooling2D(pool_size=(pool2_size, pool2_size)))
-#model.add(CORE.Activation(conv2_act))
-model.add_node(CORE.Flatten(), name='flat1', input='act1')
-model.add_node(CORE.Dense(fc1_size), name='fc1', input='flat1')
+#model.add_node(CORE.Flatten(), name='flat1', input='act1')
+model.add_node(CORE.Reshape(dims=(batch_size, seq_len-1, 512)), name='re1', input='act1')
+model.add_node(CORE.TimeDistributedDense(fc1_size), name='fc1', input='re1')
 model.add_node(CORE.Activation(fc1_act), name='act2', input='fc1')
-mdoel.add_node(RCURRENT.GRU(gru1_size), name='gru1', inputs=['act2', 'loc_in'])
-model.add_node(CORE.Dense(4), name='fc2', input='gru1')
+model.add_node(RECURRENT.GRU(gru1_size, return_sequences=True), name='gru1', inputs=['act2', 're2'])
+model.add_node(CORE.TimeDistributedDense(4), name='fc2', input='gru1')
 model.add_node(CORE.Activation(fc2_act), name='act3', input='fc2')
 model.add_output(name='output', input='act3')
 
-model.load_weights(figure_name+'-model')
+#model.load_weights(figure_name+'-model')
 
-print 'Computing convolution output function'
+#print 'Computing convolution output function'
 
-conv1_out = T.function([model.get_input()], model.layers[2].get_output(train=False))
+#conv1_out = T.function([model.get_input()], model.layers[2].get_output(train=False))
 
 print 'Building bouncing MNIST generator'
 
@@ -110,7 +118,7 @@ print 'Compiling model'
 
 opt = OPT.RMSprop()
 
-model.compile(opt, 'mse')
+model.compile(opt, {'output':'mse'})
 
 print 'Generating batch'
 
@@ -130,9 +138,13 @@ try:
 		sample = 0
 		batch = 0
 		for data, label in g:
-			batch + 1
-			label_piece = label / (image_size / 2.0) -1
-			predict_piece = model.predict_on_batch(data)['output']
+			batch += 1
+			data_piece = data[:,:-1]
+			label_piece = label[:,:-1] / (image_size / 2.0) -1
+			in_label_piece=np.concatenate((np.zeros((batch_size, 1, 4)), label_piece[:, 1:, :]), axis=1)
+			predict_piece = model.predict_on_batch({'img_in':np.reshape(data_piece, (batch_size*(seq_len-1), 1, image_size, image_size)),'loc_in':in_label_piece})
+			#print predict_piece
+			predict_piece = np.asarray(predict_piece[0])
 			loss_piece = 0.5*((predict_piece-label_piece) **2 ).sum() / batch_size
 			left = (NP.max([predict_piece[:, 0], label_piece[:, 0]], axis=0) + 1) * (image_size / 2.0)
 			top = (NP.max([predict_piece[:, 1], label_piece[:, 1]], axis=0) + 1) * (image_size / 2.0)
@@ -146,15 +158,15 @@ try:
 			union = label_area + predict_area - intersect
 			
 			print 'Epoch #', epoch, 'Batch #', batch
-			print 'Predict:'
-			print predict_real
-			print 'Label:'
-			print label_real
+			#print 'Predict:'
+			#print predict_real
+			#print 'Label:'
+			#print label_real
 			print 'Loss:'
 			print loss_piece
 			print 'Intersection / Union:'
 			print intersect / union
-			model.train_on_batch({'imc_in':data_piece, 'loc_in':np.concatenate((np.zeros(batch_size, 1, 4), label_piece[:, 1:, :]), axis=1), 'output':label_piece})
+			model.train_on_batch({'img_in':np.reshape(data_piece, (batch_size*(seq_len-1), 1, image_size, image_size)), 'loc_in':in_label_piece, 'output':label_piece})
 			#print 'Conv output:'
 			#print conv1_out(data_piece)
 			loss.append(loss_piece)
