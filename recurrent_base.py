@@ -146,15 +146,15 @@ try:
 			#print predict_piece
 			predict_piece = np.asarray(predict_piece[0])
 			loss_piece = 0.5*((predict_piece-label_piece) **2 ).sum() / batch_size
-			left = (NP.max([predict_piece[:, 0], label_piece[:, 0]], axis=0) + 1) * (image_size / 2.0)
-			top = (NP.max([predict_piece[:, 1], label_piece[:, 1]], axis=0) + 1) * (image_size / 2.0)
-			right = (NP.min([predict_piece[:, 2], label_piece[:, 2]], axis=0) + 1) * (image_size / 2.0)
-			bottom = (NP.min([predict_piece[:, 3], label_piece[:, 3]], axis=0) + 1) * (image_size / 2.0)
+			left = (NP.max([predict_piece[:, :,0], label_piece[:, :,0]], axis=0) + 1) * (image_size / 2.0)
+			top = (NP.max([predict_piece[:, :,1], label_piece[:, :,1]], axis=0) + 1) * (image_size / 2.0)
+			right = (NP.min([predict_piece[:, :,2], label_piece[:, :,2]], axis=0) + 1) * (image_size / 2.0)
+			bottom = (NP.min([predict_piece[:, :,3], label_piece[:, :,3]], axis=0) + 1) * (image_size / 2.0)
 			intersect = (right - left) * ((right - left) > 0) * (bottom - top) * ((bottom - top) > 0)
 			label_real = (label_piece + 1) * (image_size / 2.0)
 			predict_real = (predict_piece + 1) * (image_size / 2.0)
-			label_area = (label_real[:, 2] - label_piece[:, 0]) * ((label_real[:, 2] - label_real[:, 0]) > 0) * (label_real[:, 3] - label_real[:, 1]) * ((label_real[:, 3] - label_real[:, 1]) > 0)
-			predict_area = (predict_real[:, 2] - predict_real[:, 0]) * ((predict_real[:, 2] - predict_real[:, 0]) > 0) * (predict_real[:, 3] - predict_real[:, 1]) * ((predict_real[:, 3] - predict_real[:, 1]) > 0)
+			label_area = (label_real[:, :,2] - label_piece[:, :,0]) * ((label_real[:, :,2] - label_real[:, :,0]) > 0) * (label_real[:, :, 3] - label_real[:, :, 1]) * ((label_real[:, :, 3] - label_real[:, :, 1]) > 0)
+			predict_area = (predict_real[:, :,2] - predict_real[:, :,0]) * ((predict_real[:, :,2] - predict_real[:, :,0]) > 0) * (predict_real[:, :,3] - predict_real[:, :,1]) * ((predict_real[:, :,3] - predict_real[:, :,1]) > 0)
 			union = label_area + predict_area - intersect
 			
 			print 'Epoch #', epoch, 'Batch #', batch
@@ -165,7 +165,7 @@ try:
 			print 'Loss:'
 			print loss_piece
 			print 'Intersection / Union:'
-			print intersect / union
+			print np.mean(intersect / union, axis=0)
 			model.train_on_batch({'img_in':np.reshape(data_piece, (batch_size*(seq_len-1), 1, image_size, image_size)), 'loc_in':in_label_piece, 'output':label_piece})
 			#print 'Conv output:'
 			#print conv1_out(data_piece)
