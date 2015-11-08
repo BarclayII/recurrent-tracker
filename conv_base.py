@@ -17,6 +17,11 @@ from matplotlib import pyplot as PL
 from getopt import *
 import sys
 
+###
+### Arguments to train *MY* baseline:
+### --no-pool1 --conv1_stride=5 --conv1_filters=32 --conv1_filter_size=10 --conv1_act=tanh --fc2_act=tanh
+###
+
 print 'Building model'
 
 seq_len = 5
