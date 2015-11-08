@@ -20,7 +20,7 @@ import sys
 
 print 'Building model'
 
-seq_len = 50
+seq_len = 10
 #prev_frames = 4
 image_size = 100
 batch_size = 32
@@ -80,10 +80,10 @@ model.add_node(CORE.TimeDistributedDense(10), name='loc_fc', input='loc_in')
 model.add_node(CORE.Activation('tanh'), name='loc_act', input='loc_fc')
 model.add_node(CORE.Reshape(dims=(batch_size, seq_len-1, 10)), name='re2', input='loc_act')
 model.add_node(CONV.Convolution2D(conv1_filters, conv1_filter_size, conv1_filter_size, subsample=(conv1_stride,conv1_stride), border_mode='valid', input_shape=(1, image_size, image_size)),name='conv1', input='img_in')
-model.add_node(CONV.MaxPooling2D(pool_size=(pool1_size, pool1_size)), name='pool1', input='conv1')
-model.add_node(CORE.Activation(conv1_act), name='act1', input='pool1')
+#model.add_node(CONV.MaxPooling2D(pool_size=(pool1_size, pool1_size)), name='pool1', input='conv1')
+model.add_node(CORE.Activation(conv1_act), name='act1', input='conv1')
 #model.add_node(CORE.Flatten(), name='flat1', input='act1')
-model.add_node(CORE.Reshape(dims=(batch_size, seq_len-1, 512)), name='re1', input='act1')
+model.add_node(CORE.Reshape(dims=(batch_size, seq_len-1, 32*19*19)), name='re1', input='act1')
 model.add_node(CORE.TimeDistributedDense(fc1_size), name='fc1', input='re1')
 model.add_node(CORE.Activation(fc1_act), name='act2', input='fc1')
 model.add_node(RECURRENT.GRU(gru1_size, return_sequences=True), name='gru1', inputs=['act2', 're2'])
@@ -160,6 +160,7 @@ try:
 			if batch == epoch_size:
 				break
 		NP.save(str(epoch) + figure_name, epoch_loss)
+		model.save_weights(str(epoch)+figure_name+'-model', overwrite=True)
 		epoch_loss = []
 		epoch_max_diff = []
 		if epoch == nr_epochs:
