@@ -98,15 +98,15 @@ model.add_output(name='output', input='act3')
 
 print 'Compiling model'
 
-opt = OPT.Adam(lr=1e-2)
+opt = OPT.Adam(lr=1e-3)
 
 model.compile(opt, {'output':'mse'})
 
-#model.load_weights(figure_name+'-model')
+model.load_weights(figure_name+'-model')
 
 print 'Compiling finished'
 
-epoch = 0
+epoch = 12
 
 loss = []
 epoch_loss = []
@@ -114,56 +114,41 @@ epoch_loss = []
 max_diff = []
 epoch_max_diff = []
 
-try:
-	while True:
-		epoch += 1
-		sample = 0
-		batch = 0
-		for train_data, train_label in g:
-			batch += 1
-			val_data, val_label = tg.next()
-			data_piece = val_data[:,:-1]
-			label_piece = val_label[:,:-1] / (image_size / 2.0) -1
-			in_label_piece=np.concatenate((label_piece[:, 0:1, :], label_piece[:, :-1, :]), axis=1)
-			predict_piece = model.predict_on_batch({'img_in':np.reshape(data_piece, (batch_size*(seq_len-1), 1, image_size, image_size)),'loc_in':in_label_piece})
-			#print predict_piece
-			predict_piece = np.asarray(predict_piece[0])
-			loss_piece = 0.5*((predict_piece-label_piece) **2 ).sum() / batch_size
-			left = (NP.max([predict_piece[:, :,0], label_piece[:, :,0]], axis=0) + 1) * (image_size / 2.0)
-			top = (NP.max([predict_piece[:, :,1], label_piece[:, :,1]], axis=0) + 1) * (image_size / 2.0)
-			right = (NP.min([predict_piece[:, :,2], label_piece[:, :,2]], axis=0) + 1) * (image_size / 2.0)
-			bottom = (NP.min([predict_piece[:, :,3], label_piece[:, :,3]], axis=0) + 1) * (image_size / 2.0)
-			intersect = (right - left) * ((right - left) > 0) * (bottom - top) * ((bottom - top) > 0)
-			label_real = (label_piece + 1) * (image_size / 2.0)
-			predict_real = (predict_piece + 1) * (image_size / 2.0)
-			label_area = (label_real[:, :,2] - label_piece[:, :,0]) * ((label_real[:, :,2] - label_real[:, :,0]) > 0) * (label_real[:, :, 3] - label_real[:, :, 1]) * ((label_real[:, :, 3] - label_real[:, :, 1]) > 0)
-			predict_area = (predict_real[:, :,2] - predict_real[:, :,0]) * ((predict_real[:, :,2] - predict_real[:, :,0]) > 0) * (predict_real[:, :,3] - predict_real[:, :,1]) * ((predict_real[:, :,3] - predict_real[:, :,1]) > 0)
-			union = label_area + predict_area - intersect
+batch=0
+for test_data, test_label in tg:
+	batch += 1
+	data_piece = test_data[:,:-1]
+	label_piece = test_label[:,:-1]/(image_size/2.0)-1
+	loc_in = np.zeros((batch_size, seq_len-1, 4))
+	loc_in[:,0:1,:]=label_piece[:,0:1,:]
+	for t in xrange(seq_len-2):
+		print 'test_time_step=', t
+		pred = np.asarray(model.predict_on_batch({'img_in':np.reshape(data_piece, (batch_size*(seq_len-1), 1, image_size, image_size)),'loc_in':loc_in})[0])
+		loc_in[:,t+1:t+2,:]=pred[:, t:t+1,:]
+	pred = np.asarray(model.predict_on_batch({'img_in':np.reshape(data_piece, (batch_size*(seq_len-1), 1, image_size, image_size)),'loc_in':loc_in})[0])
+	predict_piece = pred
+	loss_piece = 0.5*((predict_piece-label_piece) **2 ).sum() / batch_size
+	left = (NP.max([predict_piece[:, :,0], label_piece[:, :,0]], axis=0) + 1) * (image_size / 2.0)
+	top = (NP.max([predict_piece[:, :,1], label_piece[:, :,1]], axis=0) + 1) * (image_size / 2.0)
+	right = (NP.min([predict_piece[:, :,2], label_piece[:, :,2]], axis=0) + 1) * (image_size / 2.0)
+	bottom = (NP.min([predict_piece[:, :,3], label_piece[:, :,3]], axis=0) + 1) * (image_size / 2.0)
+	intersect = (right - left) * ((right - left) > 0) * (bottom - top) * ((bottom - top) > 0)
+	label_real = (label_piece + 1) * (image_size / 2.0)
+	predict_real = (predict_piece + 1) * (image_size / 2.0)
+	label_area = (label_real[:, :,2] - label_piece[:, :,0]) * ((label_real[:, :,2] - label_real[:, :,0]) > 0) * (label_real[:, :, 3] - label_real[:, :, 1]) * ((label_real[:, :, 3] - label_real[:, :, 1]) > 0)
+	predict_area = (predict_real[:, :,2] - predict_real[:, :,0]) * ((predict_real[:, :,2] - predict_real[:, :,0]) > 0) * (predict_real[:, :,3] - predict_real[:, :,1]) * ((predict_real[:, :,3] - predict_real[:, :,1]) > 0)
+	union = label_area + predict_area - intersect
 			
-			print 'Epoch #', epoch, 'Batch #', batch
-			#print 'Predict:'
-			#print predict_real
-			#print 'Label:'
-			#print label_real
-			print 'Loss:'
-			print loss_piece
-			print 'Intersection / Union:'
-			print np.mean(intersect / union, axis=0)
-			data_piece = train_data[:,:-1]
-			label_piece = train_label[:,:-1] / (image_size / 2.0) -1
-			in_label_piece=np.concatenate((label_piece[:, 0:1, :], label_piece[:, :-1, :]), axis=1)
-			model.train_on_batch({'img_in':np.reshape(data_piece, (batch_size*(seq_len-1), 1, image_size, image_size)), 'loc_in':in_label_piece, 'output':label_piece})
-			#print 'Conv output:'
-			#print conv1_out(data_piece)
-			loss.append(loss_piece)
-			epoch_loss.append(loss_piece)
-			if batch == epoch_size:
-				break
-		NP.save(str(epoch) + figure_name, epoch_loss)
-		epoch_loss = []
-		epoch_max_diff = []
-		if epoch == nr_epochs:
-			break
-finally:
-	NP.save(figure_name, loss)
-	model.save_weights(figure_name + '-model', overwrite=True)
+	print 'Batch #', batch
+	print 'Predict:'
+	print predict_real
+	print 'Label:'
+	print label_real
+	print 'Loss:'
+	print loss_piece
+	print 'Intersection / Union:'
+	print np.mean(intersect / union, axis=0)
+	if batch>5:
+		break
+	
+

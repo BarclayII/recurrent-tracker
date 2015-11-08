@@ -2,7 +2,7 @@ import numpy as np
 import h5py
 
 class BouncingMNIST(object):
-  def __init__(self, num_digits, seq_length, batch_size, image_size, dataset_name, clutter_size_min = 5, clutter_size_max = 10, num_clutters = 20, face_intensity_min = 64, face_intensity_max = 255):
+  def __init__(self, num_digits, seq_length, batch_size, image_size, dataset_name, target_name, clutter_size_min = 5, clutter_size_max = 10, num_clutters = 20, face_intensity_min = 64, face_intensity_max = 255, run_flag=''):
     self.seq_length_ = seq_length
     self.batch_size_ = batch_size
     self.image_size_ = image_size
@@ -11,7 +11,14 @@ class BouncingMNIST(object):
     self.digit_size_ = 28
     self.frame_size_ = self.image_size_ ** 2
     f = h5py.File('mnist.h5')
-    self.data_ = f[dataset_name].value.reshape(-1, 28, 28)
+    self.data_ = np.asarray(f[dataset_name].value.reshape(-1, 28, 28))
+    self.label_ = np.asarray(f[target_name].value)
+    if run_flag=='train':
+        idx=np.where(self.label_<5)[0]
+        self.data_=self.data_[idx]
+    if run_flag=='test':
+        idx=np.where(self.label_>4)[0]
+        self.data_=self.data_[idx]
     f.close()
     self.dataset_size_ = 10000  # Size is relevant only for val/test sets.
     self.indices_ = np.arange(self.data_.shape[0])
