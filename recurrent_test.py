@@ -48,7 +48,7 @@ fc2_act = 'tanh'
 
 gru1_size=100
 
-figure_name = 'rec_train'
+figure_name = '50rec_train'
 
 print 'Building bouncing MNIST generator'
 
