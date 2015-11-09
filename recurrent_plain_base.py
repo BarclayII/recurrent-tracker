@@ -102,17 +102,18 @@ def _step(img, prev_bbox, state):
 
 # imgs: of shape (batch_size, seq_len, nr_channels, img_rows, img_cols)
 imgs = tensor5()
+starts = TT.matrix()
 
 # Move the time axis to the top
 _imgs = imgs.dimshuffle(1, 0, 2, 3, 4)
-sc, _ = T.scan(_step, sequences=[imgs.dimshuffle(1, 0, 2, 3, 4)], outputs_info=[TT.zeros((batch_size, 4)), TT.zeros((batch_size, gru_dim))])
+sc, _ = T.scan(_step, sequences=[imgs.dimshuffle(1, 0, 2, 3, 4)], outputs_info=[starts, TT.zeros((batch_size, gru_dim))])
 
 bbox_seq = sc[0].dimshuffle(1, 0, 2)
 
 # targets: of shape (batch_size, seq_len, 4)
 targets = TT.tensor3()
 
-cost = ((targets - bbox_seq) ** 2).sum()
+cost = ((targets - bbox_seq) ** 2).sum() / batch_size / seq_len
 
 print 'Building optimizer'
 
@@ -141,7 +142,7 @@ def sgd(cost, params, lr=1e-4):
         return updates
 ### RMSprop end
 
-train = T.function([imgs, targets], [cost, bbox_seq], updates=rmsprop(cost, params))
+train = T.function([imgs, starts, targets], [cost, bbox_seq], updates=rmsprop(cost, params))
 
 print 'Generating dataset'
 
@@ -151,12 +152,18 @@ bmnist = BouncingMNIST(1, seq_len, batch_size, img_row, "train/inputs", "train/t
 
 print 'START'
 
-for i in range(0, 50):
-	for j in range(0, 2000):
-		data, label = bmnist.GetBatch()
-		data = data[:, :, NP.newaxis, :, :] / 255.0
-		label = label / (img_row / 2.) - 1.
-		cost, bbox_seq = train(data, label)
-		print i, j, cost
-		print bbox_seq[0]
+import cPickle
 
+try:
+	for i in range(0, 50):
+		for j in range(0, 2000):
+			data, label = bmnist.GetBatch()
+			data = data[:, :, NP.newaxis, :, :] / 255.0
+			label = label / (img_row / 2.) - 1.
+                        cost, bbox_seq = train(data, label[:, 0, :], label)
+			print i, j, cost
+			print bbox_seq[0]
+finally:
+	f = open("model.pkl", "wb")
+	cPickle.dump(map(lambda x: x.get_value(), params), f)
+	f.close()
