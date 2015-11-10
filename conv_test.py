@@ -100,9 +100,9 @@ print 'Building bouncing MNIST generator'
 from data_handler import *
 
 def GenBatch():
-	bmnist = BouncingMNIST(1, seq_len, batch_size, image_size, 'test/inputs', clutter_size_max = 14)
+	bmnist = BouncingMNIST(1, seq_len, batch_size, image_size, 'test/inputs', 'test/targets', clutter_size_max = 10)
 	while True:
-		yield bmnist.GetBatch()
+		yield bmnist.GetBatch(count=2)
 
 print 'Compiling model'
 
