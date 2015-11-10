@@ -136,7 +136,7 @@ try:
 			intersect = (right - left) * ((right - left) > 0) * (bottom - top) * ((bottom - top) > 0)
 			label_real = (label_piece + 1) * (image_size / 2.0)
 			predict_real = (predict_piece + 1) * (image_size / 2.0)
-			label_area = (label_real[:, :,2] - label_piece[:, :,0]) * ((label_real[:, :,2] - label_real[:, :,0]) > 0) * (label_real[:, :, 3] - label_real[:, :, 1]) * ((label_real[:, :, 3] - label_real[:, :, 1]) > 0)
+			label_area = (label_real[:, :,2] - label_real[:, :,0]) * ((label_real[:, :,2] - label_real[:, :,0]) > 0) * (label_real[:, :, 3] - label_real[:, :, 1]) * ((label_real[:, :, 3] - label_real[:, :, 1]) > 0)
 			predict_area = (predict_real[:, :,2] - predict_real[:, :,0]) * ((predict_real[:, :,2] - predict_real[:, :,0]) > 0) * (predict_real[:, :,3] - predict_real[:, :,1]) * ((predict_real[:, :,3] - predict_real[:, :,1]) > 0)
 			union = label_area + predict_area - intersect
 			
