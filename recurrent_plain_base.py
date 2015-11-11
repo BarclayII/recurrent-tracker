@@ -77,6 +77,7 @@ gru_dim = 80
 seq_len = 200
 model_name = 'model.pkl'
 zero_tail_fc = False
+variadic_length = False
 ### CONFIGURATION END
 
 ### getopt begin
@@ -84,7 +85,7 @@ from getopt import *
 import sys
 
 try:
-	opts, args = getopt(sys.argv[1:], "", ["batch_size=", "conv1_nr_filters=", "conv1_filter_size=", "conv1_stride=", "img_size=", "gru_dim=", "seq_len=", "use_cudnn", "zero_tail_fc"])
+	opts, args = getopt(sys.argv[1:], "", ["batch_size=", "conv1_nr_filters=", "conv1_filter_size=", "conv1_stride=", "img_size=", "gru_dim=", "seq_len=", "use_cudnn", "zero_tail_fc", "var_len"])
 	for opt in opts:
 		if opt[0] == "--batch_size":
 			batch_size = int(opt[1])
@@ -108,6 +109,8 @@ try:
 					conv2d = CUDNN.dnn_conv
 		elif opt[0] == "--zero_tail_fc":
 			zero_tail_fc = True
+		elif opt[0] == "--var_len":
+			variadic_length = True
 	if len(args) > 0:
 		model_name = args[0]
 except:
@@ -167,8 +170,9 @@ bbox_seq = sc[0].dimshuffle(1, 0, 2)
 
 # targets: of shape (batch_size, seq_len, 4)
 targets = TT.tensor3()
+seq_len_scalar = TT.scalar()
 
-cost = ((targets - bbox_seq) ** 2).sum() / batch_size / seq_len
+cost = ((targets - bbox_seq) ** 2).sum() / batch_size / seq_len_scalar
 
 print 'Building optimizer'
 
@@ -191,13 +195,12 @@ def rmsprop(cost, params, lr=0.001, rho=0.9, epsilon=1e-6):
 
 ### RMSprop end
 
-train = T.function([imgs, starts, targets], [cost, bbox_seq], updates=rmsprop(cost, params), allow_input_downcast=True)
+train = T.function([seq_len_scalar, imgs, starts, targets], [cost, bbox_seq], updates=rmsprop(cost, params), allow_input_downcast=True)
 
 print 'Generating dataset'
 
 from data_handler import *
 
-bmnist = BouncingMNIST(1, seq_len, batch_size, img_row, "train/inputs", "train/targets")
 
 print 'START'
 
@@ -206,10 +209,12 @@ import cPickle
 try:
 	for i in range(0, 50):
 		for j in range(0, 2000):
+			_len = int(RNG.exponential(seq_len - 5) + 5) if variadic_length else seq_len
+			bmnist = BouncingMNIST(1, _len, batch_size, img_row, "train/inputs", "train/targets")
 			data, label = bmnist.GetBatch()
 			data = data[:, :, NP.newaxis, :, :] / 255.0
 			label = label / (img_row / 2.) - 1.
-			cost, bbox_seq = train(data, label[:, 0, :], label)
+			cost, bbox_seq = train(_len, data, label[:, 0, :], label)
 			left = NP.max([bbox_seq[:, :, 0], label[:, :, 0]], axis=0)
 			top = NP.max([bbox_seq[:, :, 1], label[:, :, 1]], axis=0)
 			right = NP.min([bbox_seq[:, :, 2], label[:, :, 2]], axis=0)

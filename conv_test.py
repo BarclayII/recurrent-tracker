@@ -142,7 +142,7 @@ def func(data):
 
 avg = 0
 
-for test in range(0, 100):
+for test in range(0, 20):
 	data, label = g.next()
 	data = data[0]
 	label = label[0]
