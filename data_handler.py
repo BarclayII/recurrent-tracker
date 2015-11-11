@@ -152,7 +152,6 @@ class BouncingMNIST(object):
                         digit_size_ = self.digit_size_
                     digit_image = scale_image
                     digit_size_ = digit_size_ * scale_factor 
-                    print bottom-top, right-left, np.shape(digit_image)
                     data[j, i, top:bottom, left:right] = self.Overlap(data[j, i, top:bottom, left:right], scale_image)
                     data[j, i] = self.Overlap(clutter_bg, data[j, i])
                     data[j, i] = self.Overlap(data[j, i], clutter)
