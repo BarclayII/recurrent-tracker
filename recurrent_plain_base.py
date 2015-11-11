@@ -78,6 +78,7 @@ seq_len = 200
 model_name = 'model.pkl'
 zero_tail_fc = False
 variadic_length = False
+test = False
 ### CONFIGURATION END
 
 ### getopt begin
@@ -85,7 +86,7 @@ from getopt import *
 import sys
 
 try:
-	opts, args = getopt(sys.argv[1:], "", ["batch_size=", "conv1_nr_filters=", "conv1_filter_size=", "conv1_stride=", "img_size=", "gru_dim=", "seq_len=", "use_cudnn", "zero_tail_fc", "var_len"])
+	opts, args = getopt(sys.argv[1:], "", ["batch_size=", "conv1_nr_filters=", "conv1_filter_size=", "conv1_stride=", "img_size=", "gru_dim=", "seq_len=", "use_cudnn", "zero_tail_fc", "var_len", "test"])
 	for opt in opts:
 		if opt[0] == "--batch_size":
 			batch_size = int(opt[1])
@@ -111,6 +112,8 @@ try:
 			zero_tail_fc = True
 		elif opt[0] == "--var_len":
 			variadic_length = True
+		elif opt[0] == "--test":
+			test = True
 	if len(args) > 0:
 		model_name = args[0]
 except:
@@ -195,7 +198,7 @@ def rmsprop(cost, params, lr=0.001, rho=0.9, epsilon=1e-6):
 
 ### RMSprop end
 
-train = T.function([seq_len_scalar, imgs, starts, targets], [cost, bbox_seq], updates=rmsprop(cost, params), allow_input_downcast=True)
+train = T.function([seq_len_scalar, imgs, starts, targets], [cost, bbox_seq], updates=rmsprop(cost, params) if not test else None, allow_input_downcast=True)
 
 print 'Generating dataset'
 
@@ -211,7 +214,7 @@ try:
 		for j in range(0, 2000):
 			_len = int(RNG.exponential(seq_len - 5) + 5) if variadic_length else seq_len
 			bmnist = BouncingMNIST(1, _len, batch_size, img_row, "train/inputs", "train/targets")
-			data, label = bmnist.GetBatch()
+			data, label = bmnist.GetBatch(count=2)
 			data = data[:, :, NP.newaxis, :, :] / 255.0
 			label = label / (img_row / 2.) - 1.
 			cost, bbox_seq = train(_len, data, label[:, 0, :], label)
