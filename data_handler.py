@@ -3,7 +3,7 @@ import h5py
 import scipy.ndimage as spn
 
 class BouncingMNIST(object):
-    def __init__(self, num_digits, seq_length, batch_size, image_size, dataset_name, target_name, scale_range=1e-1, clutter_size_min = 5, clutter_size_max = 10, num_clutters = 20, face_intensity_min = 64, face_intensity_max = 255, run_flag='', acc_scale=0):
+    def __init__(self, num_digits, seq_length, batch_size, image_size, dataset_name, target_name, scale_range=1e-1, clutter_size_min = 5, clutter_size_max = 10, num_clutters = 20, face_intensity_min = 64, face_intensity_max = 255, run_flag='', acc=0):
         self.seq_length_ = seq_length
         self.batch_size_ = batch_size
         self.image_size_ = image_size

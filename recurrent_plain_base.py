@@ -79,6 +79,10 @@ model_name = 'model.pkl'
 zero_tail_fc = False
 variadic_length = False
 test = False
+acc_scale = 0
+zoom_scale = 0
+double_mnist = False
+dataset_name = "train"
 ### CONFIGURATION END
 
 ### getopt begin
@@ -86,7 +90,8 @@ from getopt import *
 import sys
 
 try:
-	opts, args = getopt(sys.argv[1:], "", ["batch_size=", "conv1_nr_filters=", "conv1_filter_size=", "conv1_stride=", "img_size=", "gru_dim=", "seq_len=", "use_cudnn", "zero_tail_fc", "var_len", "test"])
+	opts, args = getopt(sys.argv[1:], "", ["batch_size=", "conv1_nr_filters=", "conv1_filter_size=", "conv1_stride=", "img_size=", "gru_dim=", "seq_len=", "use_cudnn", "zero_tail_fc", "var_len", "test", "acc_scale=",
+		"zoom_scale=", "dataset=", "double_mnist"])
 	for opt in opts:
 		if opt[0] == "--batch_size":
 			batch_size = int(opt[1])
@@ -114,6 +119,14 @@ try:
 			variadic_length = True
 		elif opt[0] == "--test":
 			test = True
+		elif opt[0] == "--acc_scale":
+			acc_scale = float(opt[1])
+		elif opt[0] == "--zoom_scale":
+			zoom_scale = float(opt[1])
+		elif opt[0] == "--double_mnist":
+			double_mnist = True
+		elif opt[0] == "--dataset":
+			dataset_name = opt[1]
 	if len(args) > 0:
 		model_name = args[0]
 except:
@@ -200,21 +213,32 @@ def rmsprop(cost, params, lr=0.001, rho=0.9, epsilon=1e-6):
 
 train = T.function([seq_len_scalar, imgs, starts, targets], [cost, bbox_seq], updates=rmsprop(cost, params) if not test else None, allow_input_downcast=True)
 
+import cPickle
+
+if test:
+	f = open(model_name, "rb")
+	param_saved = cPickle.load(f)
+	for _p, p in zip(params, param_saved):
+		_p.set_value(p)
+
 print 'Generating dataset'
 
-from data_handler import *
-
+if zoom_scale == 0:
+	from data_handler import *
+else:
+	from data_handler_new import *
 
 print 'START'
-
-import cPickle
 
 try:
 	for i in range(0, 50):
 		for j in range(0, 2000):
 			_len = int(RNG.exponential(seq_len - 5) + 5) if variadic_length else seq_len
-			bmnist = BouncingMNIST(1, _len, batch_size, img_row, "train/inputs", "train/targets")
-			data, label = bmnist.GetBatch(count=2)
+			if zoom_scale == 0:
+				bmnist = BouncingMNIST(1, _len, batch_size, img_row, dataset_name+"/inputs", dataset_name+"/targets", acc=acc_scale)
+			else:
+				bmnist = BouncingMNIST(1, _len, batch_size, img_row, dataset_name+"/inputs", dataset_name+"/targets", acc=acc_scale, scale_range=zoom_scale)
+			data, label = bmnist.GetBatch(count = 2 if double_mnist else 1)
 			data = data[:, :, NP.newaxis, :, :] / 255.0
 			label = label / (img_row / 2.) - 1.
 			cost, bbox_seq = train(_len, data, label[:, 0, :], label)
@@ -230,6 +254,7 @@ try:
 			iou = intersect / union
 			print NP.average(iou, axis=0)
 finally:
-	f = open(model_name, "wb")
-	cPickle.dump(map(lambda x: x.get_value(), params), f)
-	f.close()
+	if not test:
+		f = open(model_name, "wb")
+		cPickle.dump(map(lambda x: x.get_value(), params), f)
+		f.close()
