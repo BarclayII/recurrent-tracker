@@ -3,7 +3,7 @@ import h5py
 import scipy.ndimage as spn
 
 class BouncingMNIST(object):
-    def __init__(self, num_digits, seq_length, batch_size, image_size, dataset_name, target_name, scale_range=1e-1, clutter_size_min = 5, clutter_size_max = 10, num_clutters = 20, face_intensity_min = 64, face_intensity_max = 255, run_flag=''):
+    def __init__(self, num_digits, seq_length, batch_size, image_size, dataset_name, target_name, scale_range=1e-1, clutter_size_min = 5, clutter_size_max = 10, num_clutters = 20, face_intensity_min = 64, face_intensity_max = 255, run_flag='', acc_scale=0):
         self.seq_length_ = seq_length
         self.batch_size_ = batch_size
         self.image_size_ = image_size
@@ -30,6 +30,7 @@ class BouncingMNIST(object):
         self.num_clutters_ = num_clutters
         self.face_intensity_min = face_intensity_min
         self.face_intensity_max = face_intensity_max
+        self.acc_scale = acc_scale
         np.random.shuffle(self.indices_)
 
     def GetBatchSize(self):
@@ -66,6 +67,9 @@ class BouncingMNIST(object):
             # Take a step along velocity.
             y += v_y * self.step_length_
             x += v_x * self.step_length_
+
+            v_y += 0 if self.acc_scale == 0 else np.random.normal(0, self.acc_scale, v_y.shape)
+            v_x += 0 if self.acc_scale == 0 else np.random.normal(0, self.acc_scale, v_x.shape)
 
             # Bounce off edges.
             for j in range(batch_size):
