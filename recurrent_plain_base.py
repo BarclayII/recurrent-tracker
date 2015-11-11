@@ -223,10 +223,7 @@ if test:
 
 print 'Generating dataset'
 
-if zoom_scale == 0:
-	from data_handler import *
-else:
-	from data_handler_new import *
+from data_handler import *
 
 print 'START'
 
@@ -234,10 +231,7 @@ try:
 	for i in range(0, 50):
 		for j in range(0, 2000):
 			_len = int(RNG.exponential(seq_len - 5) + 5) if variadic_length else seq_len
-			if zoom_scale == 0:
-				bmnist = BouncingMNIST(1, _len, batch_size, img_row, dataset_name+"/inputs", dataset_name+"/targets", acc=acc_scale)
-			else:
-				bmnist = BouncingMNIST(1, _len, batch_size, img_row, dataset_name+"/inputs", dataset_name+"/targets", acc=acc_scale, scale_range=zoom_scale)
+			bmnist = BouncingMNIST(1, _len, batch_size, img_row, dataset_name+"/inputs", dataset_name+"/targets", acc=acc_scale, scale_range=zoom_scale)
 			data, label = bmnist.GetBatch(count = 2 if double_mnist else 1)
 			data = data[:, :, NP.newaxis, :, :] / 255.0
 			label = label / (img_row / 2.) - 1.
