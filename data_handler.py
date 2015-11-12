@@ -30,7 +30,7 @@ class BouncingMNIST(object):
         self.num_clutters_ = num_clutters
         self.face_intensity_min = face_intensity_min
         self.face_intensity_max = face_intensity_max
-        self.acc_scale = acc_scale
+        self.acc_scale = acc
         np.random.shuffle(self.indices_)
 
     def GetBatchSize(self):
@@ -95,6 +95,7 @@ class BouncingMNIST(object):
 
     def Overlap(self, a, b):
         """ Put b on top of a."""
+        b = np.where(b > 32, b, 0)
         t = min(np.shape(a))
         b = b[:t, :t]
         return np.select([b == 0, b != 0], [a, b])
@@ -151,7 +152,7 @@ class BouncingMNIST(object):
                         right  = left + self.digit_size_-1
                         digit_size_ = self.digit_size_
                     digit_image = scale_image
-                    digit_size_ = digit_size_ * scale_factor 
+                    digit_size_ = digit_size_ * scale_factor
                     data[j, i, top:bottom, left:right] = self.Overlap(data[j, i, top:bottom, left:right], scale_image)
                     data[j, i] = self.Overlap(clutter_bg, data[j, i])
                     data[j, i] = self.Overlap(data[j, i], clutter)
