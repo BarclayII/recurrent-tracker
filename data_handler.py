@@ -142,17 +142,20 @@ class BouncingMNIST(object):
                 for i in range(self.seq_length_):
                     scale_factor = np.exp((np.random.random_sample()-0.5)*self.scale_range)
                     scale_image = spn.zoom(digit_image, scale_factor)
+                    digit_size_ = digit_size_ * scale_factor 
                     top    = start_y[i, j * self.num_digits_ + n]
                     left   = start_x[i, j * self.num_digits_ + n]
-                    bottom = top  + digit_size_ * scale_factor-1
-                    right  = left + digit_size_ * scale_factor-1
+                    if digit_size_!=np.shape(scale_image)[0]:
+                        digit_size_ = np.shape(scale_image)[0]
+                        bottom = top  + digit_size_
+                        right  = left + digit_size_
                     if right>self.image_size_ or bottom>self.image_size_:
                         scale_image = bak_digit_image
-                        bottom = top  + self.digit_size_-1
-                        right  = left + self.digit_size_-1
+                        bottom = top  + self.digit_size_
+                        right  = left + self.digit_size_
                         digit_size_ = self.digit_size_
                     digit_image = scale_image
-                    digit_size_ = digit_size_ * scale_factor
+ 
                     data[j, i, top:bottom, left:right] = self.Overlap(data[j, i, top:bottom, left:right], scale_image)
                     data[j, i] = self.Overlap(clutter_bg, data[j, i])
                     data[j, i] = self.Overlap(data[j, i], clutter)
