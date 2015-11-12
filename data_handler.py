@@ -3,7 +3,7 @@ import h5py
 import scipy.ndimage as spn
 
 class BouncingMNIST(object):
-    def __init__(self, num_digits, seq_length, batch_size, image_size, dataset_name, target_name, scale_range=0, clutter_size_min = 5, clutter_size_max = 10, num_clutters = 20, face_intensity_min = 64, face_intensity_max = 255, run_flag='', acc=0):
+    def __init__(self, num_digits, seq_length, batch_size, image_size, dataset_name, target_name, scale_range=0, clutter_size_min = 5, clutter_size_max = 10, num_clutters = 20, face_intensity_min = 64, face_intensity_max = 255, run_flag='', acc=0, vel=1):
         self.seq_length_ = seq_length
         self.batch_size_ = batch_size
         self.image_size_ = image_size
@@ -31,6 +31,7 @@ class BouncingMNIST(object):
         self.face_intensity_min = face_intensity_min
         self.face_intensity_max = face_intensity_max
         self.acc_scale = acc
+        self.vel_scale = vel
         np.random.shuffle(self.indices_)
 
     def GetBatchSize(self):
@@ -58,8 +59,9 @@ class BouncingMNIST(object):
 
         # Choose a random velocity.
         theta = np.random.rand(batch_size) * 2 * np.pi
-        v_y = np.sin(theta)
-        v_x = np.cos(theta)
+        start_vel = np.random.normal(0, self.vel_scale)
+        v_y = start_vel * np.sin(theta)
+        v_x = start_vel * np.cos(theta)
 
         start_y = np.zeros((length, batch_size))
         start_x = np.zeros((length, batch_size))
@@ -68,8 +70,8 @@ class BouncingMNIST(object):
             y += v_y * self.step_length_
             x += v_x * self.step_length_
 
-            v_y += 0 if self.acc_scale == 0 else np.random.uniform(-self.acc_scale, self.acc_scale, v_y.shape)
-            v_x += 0 if self.acc_scale == 0 else np.random.uniform(-self.acc_scale, self.acc_scale, v_x.shape)
+            v_y += 0 if self.acc_scale == 0 else np.random.normal(0, self.acc_scale, v_y.shape)
+            v_x += 0 if self.acc_scale == 0 else np.random.normal(0, self.acc_scale, v_x.shape)
 
             # Bounce off edges.
             for j in range(batch_size):
@@ -147,8 +149,8 @@ class BouncingMNIST(object):
                     left   = start_x[i, j * self.num_digits_ + n]
                     if digit_size_!=np.shape(scale_image)[0]:
                         digit_size_ = np.shape(scale_image)[0]
-                        bottom = top  + digit_size_
-                        right  = left + digit_size_
+                    bottom = top  + digit_size_
+                    right  = left + digit_size_
                     if right>self.image_size_ or bottom>self.image_size_:
                         scale_image = bak_digit_image
                         bottom = top  + self.digit_size_
