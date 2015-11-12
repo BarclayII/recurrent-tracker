@@ -49,9 +49,15 @@ class BouncingMNIST(object):
     def Reset(self):
         pass
 
-    def GetRandomTrajectory(self, batch_size):
+    def GetRandomTrajectory(self, batch_size, image_size_ = None, object_size_ = None, step_length_ = None):
+        if image_size_ is None:
+            image_size_ = self.image_size_
+        if object_size_ is None:
+            object_size_ = self.digit_size_
+        if step_length_ is None:
+        	  step_length_ = self.step_length_
         length = self.seq_length_
-        canvas_size = self.image_size_ - self.digit_size_
+        canvas_size = image_size_ - object_size_
 
         # Initial position uniform random inside the box.
         y = np.random.rand(batch_size)
@@ -67,8 +73,8 @@ class BouncingMNIST(object):
         start_x = np.zeros((length, batch_size))
         for i in range(length):
             # Take a step along velocity.
-            y += v_y * self.step_length_
-            x += v_x * self.step_length_
+            y += v_y * step_length_
+            x += v_x * step_length_
 
             v_y += 0 if self.acc_scale == 0 else np.random.normal(0, self.acc_scale, v_y.shape)
             v_x += 0 if self.acc_scale == 0 else np.random.normal(0, self.acc_scale, v_x.shape)
@@ -103,15 +109,19 @@ class BouncingMNIST(object):
         return np.select([b == 0, b != 0], [a, b])
         #return b
 
-    def GetClutter(self):
-        clutter = np.zeros((self.image_size_, self.image_size_), dtype=np.float32)
-        for i in range(self.num_clutters_):
+    def GetClutter(self, image_size_ = None, num_clutters_ = None):
+        if image_size_ is None :
+            image_size_ = self.image_size_
+        if num_clutters_ is None :
+            num_clutters_ = self.num_clutters_
+        clutter = np.zeros((image_size_, image_size_), dtype=np.float32)
+        for i in range(num_clutters_):
             sample_index = np.random.randint(self.data_.shape[0])
             size = np.random.randint(self.clutter_size_min_, self.clutter_size_max_)
             left = np.random.randint(0, self.digit_size_ - size)
             top = np.random.randint(0, self.digit_size_ - size)
-            clutter_left = np.random.randint(0, self.image_size_ - size)
-            clutter_top = np.random.randint(0, self.image_size_ - size)
+            clutter_left = np.random.randint(0, image_size_ - size)
+            clutter_top = np.random.randint(0, image_size_ - size)
             single_clutter = np.zeros_like(clutter)
             single_clutter[clutter_top:clutter_top+size, clutter_left:clutter_left+size] = self.data_[np.random.randint(self.data_.shape[0]), top:top+size, left:left+size] / 255.0 * np.random.uniform(self.face_intensity_min, self.face_intensity_max)
             clutter = self.Overlap(clutter, single_clutter)
@@ -119,6 +129,7 @@ class BouncingMNIST(object):
 
     def GetBatch(self, verbose=False, count=1):
         start_y, start_x = self.GetRandomTrajectory(self.batch_size_ * self.num_digits_)
+        window_y, window_x = self.GetRandomTrajectory(self.batch_size_ * 1, self.image_size_*2, object_size_=self.image_size_, step_length_ = 1e-2)
         # TODO: change data to real image or cluttered background
         data = np.zeros((self.batch_size_, self.seq_length_, self.image_size_, self.image_size_), dtype=np.float32)
         label = np.zeros((self.batch_size_, self.seq_length_, 4))
@@ -137,8 +148,8 @@ class BouncingMNIST(object):
                     digit_image = self.data_[ind, :, :] / 255.0 * np.random.uniform(self.face_intensity_min, self.face_intensity_max)
                 digit_image_nonzero = digit_image.nonzero()
                 label_offset = np.array([digit_image_nonzero[0].min(), digit_image_nonzero[1].min(), digit_image_nonzero[0].max(), digit_image_nonzero[1].max()])
-                clutter = self.GetClutter()
-                clutter_bg = self.GetClutter()
+                clutter = self.GetClutter(self.image_size_ * 2, self.num_clutters_ * 4)
+                clutter_bg = self.GetClutter(self.image_size_ * 2, self.num_clutters_ * 4)
                 bak_digit_image = digit_image 
                 digit_size_ = self.digit_size_
                 for i in range(self.seq_length_):
@@ -158,8 +169,10 @@ class BouncingMNIST(object):
                         digit_size_ = self.digit_size_
                     digit_image = scale_image
  
+                    wy=window_y[i, j]
+                    wx=window_x[i, j]
                     data[j, i, top:bottom, left:right] = self.Overlap(data[j, i, top:bottom, left:right], scale_image)
-                    data[j, i] = self.Overlap(clutter_bg, data[j, i])
-                    data[j, i] = self.Overlap(data[j, i], clutter)
+                    data[j, i] = self.Overlap(clutter_bg[wy:wy+self.image_size_, wx:wx+self.image_size_], data[j, i])
+                    data[j, i] = self.Overlap(data[j, i], clutter[wy:wy+self.image_size_, wx:wx+self.image_size_])
                     label[j, i] = label_offset + np.array([top, left, top, left])
         return data, label
