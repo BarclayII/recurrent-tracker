@@ -1,6 +1,7 @@
 import numpy as np
 import h5py
 import scipy.ndimage as spn
+import os
 
 class BouncingMNIST(object):
     def __init__(self, num_digits, seq_length, batch_size, image_size, dataset_name, target_name, scale_range=0, clutter_size_min = 5, clutter_size_max = 10, num_clutters = 20, face_intensity_min = 64, face_intensity_max = 255, run_flag='', acc=0):
@@ -9,6 +10,11 @@ class BouncingMNIST(object):
         self.image_size_ = image_size
         self.num_digits_ = num_digits
         self.scale_range = scale_range
+        self.num_clutterPack = 1000
+        self.clutterpack_exists=  os.path.exists('ClutterPack.hdf5')
+        if self.clutterpack_exists:
+            f = h5py.File('ClutterPack.hdf5', 'r')
+            self.clutterPack = f['clutterIMG'][:]
         self.step_length_ = 0.1
         self.digit_size_ = 28
         self.frame_size_ = self.image_size_ ** 2
@@ -107,11 +113,31 @@ class BouncingMNIST(object):
         return np.select([b == 0, b != 0], [a, b])
         #return b
 
-    def GetClutter(self, image_size_ = None, num_clutters_ = None):
+    def InitClutterPack(self, num_clutterPack = None, image_size_ = None, num_clutters_ = None):
+        if num_clutterPack is None :
+            num_clutterPack = self.num_clutterPack    	
+        if image_size_ is None :
+            image_size_ = self.image_size_ * 2
+        if num_clutters_ is None :
+            num_clutters_ = self.num_clutters_ * 4
+        clutterIMG = np.zeros((num_clutterPack, image_size_, image_size_))
+        for i in xrange(num_clutterPack):
+            clutterIMG[i] = self.GetClutter(image_size_, num_clutters_)
+        f = h5py.File('ClutterPack.hdf5', 'w')
+        f.create_dataset('clutterIMG', data=clutterIMG)
+        f.close()
+            
+    def GetFakeClutter(self):
+        if self.clutterpack_exists:
+            return self.clutterPack[np.random.randint(0, len(self.clutterPack))]
+    
+    def GetClutter(self, image_size_ = None, num_clutters_ = None, fake = False):
         if image_size_ is None :
             image_size_ = self.image_size_
         if num_clutters_ is None :
             num_clutters_ = self.num_clutters_
+        if fake and self.clutterpack_exists:
+            return self.GetFakeClutter()
         clutter = np.zeros((image_size_, image_size_), dtype=np.float32)
         for i in range(num_clutters_):
             sample_index = np.random.randint(self.data_.shape[0])
@@ -146,8 +172,8 @@ class BouncingMNIST(object):
                     digit_image = self.data_[ind, :, :] / 255.0 * np.random.uniform(self.face_intensity_min, self.face_intensity_max)
                 digit_image_nonzero = digit_image.nonzero()
                 label_offset = np.array([digit_image_nonzero[0].min(), digit_image_nonzero[1].min(), digit_image_nonzero[0].max(), digit_image_nonzero[1].max()])
-                clutter = self.GetClutter(self.image_size_ * 2, self.num_clutters_ * 4)
-                clutter_bg = self.GetClutter(self.image_size_ * 2, self.num_clutters_ * 4)
+                clutter = self.GetClutter(fake=True)
+                clutter_bg = self.GetClutter(fake=True)
                 bak_digit_image = digit_image 
                 digit_size_ = self.digit_size_
                 for i in range(self.seq_length_):
