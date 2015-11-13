@@ -12,9 +12,10 @@ class BouncingMNIST(object):
         self.scale_range = scale_range
         self.num_clutterPack = 1000
         self.clutterpack_exists=  os.path.exists('ClutterPack.hdf5')
-        if self.clutterpack_exists:
-            f = h5py.File('ClutterPack.hdf5', 'r')
-            self.clutterPack = f['clutterIMG'][:]
+	if not self.clutterpack_exists:
+		self.InitClutterPack()
+        f = h5py.File('ClutterPack.hdf5', 'r')
+        self.clutterPack = f['clutterIMG'][:]
         self.step_length_ = 0.1
         self.digit_size_ = 28
         self.frame_size_ = self.image_size_ ** 2
