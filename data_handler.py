@@ -10,12 +10,6 @@ class BouncingMNIST(object):
         self.image_size_ = image_size
         self.num_digits_ = num_digits
         self.scale_range = scale_range
-        self.num_clutterPack = 1000
-        self.clutterpack_exists=  os.path.exists('ClutterPack.hdf5')
-	if not self.clutterpack_exists:
-		self.InitClutterPack()
-        f = h5py.File('ClutterPack.hdf5', 'r')
-        self.clutterPack = f['clutterIMG'][:]
         self.step_length_ = 0.1
         self.digit_size_ = 28
         self.frame_size_ = self.image_size_ ** 2
@@ -40,6 +34,12 @@ class BouncingMNIST(object):
         self.acc_scale = acc
         self.vel_scale = vel
         np.random.shuffle(self.indices_)
+        self.num_clutterPack = 1000
+        self.clutterpack_exists=  os.path.exists('ClutterPack.hdf5')
+	if not self.clutterpack_exists:
+		self.InitClutterPack()
+        f = h5py.File('ClutterPack.hdf5', 'r')
+        self.clutterPack = f['clutterIMG'][:]
 
     def GetBatchSize(self):
         return self.batch_size_
@@ -117,6 +117,7 @@ class BouncingMNIST(object):
         #return b
 
     def InitClutterPack(self, num_clutterPack = None, image_size_ = None, num_clutters_ = None):
+        print 'Initializing clutter package for the first time...'
         if num_clutterPack is None :
             num_clutterPack = self.num_clutterPack    	
         if image_size_ is None :
