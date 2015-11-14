@@ -37,8 +37,8 @@ class BouncingMNIST(object):
         np.random.shuffle(self.indices_)
         self.num_clutterPack = 10000
         self.clutterpack_exists=  os.path.exists('ClutterPack.hdf5')
-	if not self.clutterpack_exists:
-		self.InitClutterPack()
+        if not self.clutterpack_exists:
+            self.InitClutterPack()
         f = h5py.File('ClutterPack.hdf5', 'r')
         self.clutterPack = f['clutterIMG'][:]
         self.buff_ptr = 0
@@ -69,7 +69,7 @@ class BouncingMNIST(object):
         if object_size_ is None:
             object_size_ = self.digit_size_
         if step_length_ is None:
-        	  step_length_ = self.step_length_
+            step_length_ = self.step_length_
         length = self.seq_length_
         canvas_size = image_size_ - object_size_
 
@@ -124,9 +124,8 @@ class BouncingMNIST(object):
         #return b
 
     def InitClutterPack(self, num_clutterPack = None, image_size_ = None, num_clutters_ = None):
-        print 'Initializing clutter package for the first time...'
         if num_clutterPack is None :
-            num_clutterPack = self.num_clutterPack    	
+            num_clutterPack = self.num_clutterPack
         if image_size_ is None :
             image_size_ = self.image_size_ * 2
         if num_clutters_ is None :
@@ -186,6 +185,12 @@ class BouncingMNIST(object):
                 data[j], label[j] = self.getBuff()
                 continue
             else:
+                clutter = self.GetClutter(fake=True)
+                clutter_bg = self.GetClutter(fake=True)
+                for i in range(self.seq_length_):
+                    wx = window_x[i,j]
+                    wy = window_y[i,j]
+                    data[j, i] = self.Overlap(clutter_bg[wy:wy+self.image_size_, wx:wx+self.image_size_], data[j, i])
                 for n in range(self.num_digits_):
                     ind = self.indices_[self.row_]
                     self.row_ += 1
@@ -200,8 +205,6 @@ class BouncingMNIST(object):
                         digit_image = self.data_[ind, :, :] / 255.0 * np.random.uniform(self.face_intensity_min, self.face_intensity_max)
                     digit_image_nonzero = digit_image.nonzero()
                     label_offset = np.array([digit_image_nonzero[0].min(), digit_image_nonzero[1].min(), digit_image_nonzero[0].max(), digit_image_nonzero[1].max()])
-                    clutter = self.GetClutter(fake=True)
-                    clutter_bg = self.GetClutter(fake=True)
                     bak_digit_image = digit_image 
                     digit_size_ = self.digit_size_
                     for i in range(self.seq_length_):
@@ -224,9 +227,12 @@ class BouncingMNIST(object):
                         wy=window_y[i, j]
                         wx=window_x[i, j]
                         data[j, i, top:bottom, left:right] = self.Overlap(data[j, i, top:bottom, left:right], scale_image)
-                        data[j, i] = self.Overlap(clutter_bg[wy:wy+self.image_size_, wx:wx+self.image_size_], data[j, i])
                         data[j, i] = self.Overlap(data[j, i], clutter[wy:wy+self.image_size_, wx:wx+self.image_size_])
                         label[j, i] = label_offset + np.array([top, left, top, left])
+                for i in range(self.seq_length_):
+                    wx = window_x[i,j]
+                    wy = window_y[i,j]
+                    data[j, i] = self.Overlap(data[j, i], clutter[wy:wy+self.image_size_, wx:wx+self.image_size_])
                 if self.buff:
                     self.setBuff(data[j], label[j])
         return data, label
