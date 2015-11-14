@@ -4,12 +4,13 @@ import scipy.ndimage as spn
 import os
 
 class BouncingMNIST(object):
-    def __init__(self, num_digits, seq_length, batch_size, image_size, dataset_name, target_name, scale_range=0, clutter_size_min = 5, clutter_size_max = 10, num_clutters = 20, face_intensity_min = 64, face_intensity_max = 255, run_flag='', acc=0, vel=1):
+    def __init__(self, num_digits, seq_length, batch_size, image_size, dataset_name, target_name, scale_range=0, clutter_size_min = 5, clutter_size_max = 10, num_clutters = 20, face_intensity_min = 64, face_intensity_max = 255, run_flag='', acc=0, vel=1, buff=True):
         self.seq_length_ = seq_length
         self.batch_size_ = batch_size
         self.image_size_ = image_size
         self.num_digits_ = num_digits
         self.scale_range = scale_range
+        self.buff = buff
         self.step_length_ = 0.1
         self.digit_size_ = 28
         self.frame_size_ = self.image_size_ ** 2
@@ -34,12 +35,18 @@ class BouncingMNIST(object):
         self.acc_scale = acc
         self.vel_scale = vel
         np.random.shuffle(self.indices_)
-        self.num_clutterPack = 1000
+        self.num_clutterPack = 10000
         self.clutterpack_exists=  os.path.exists('ClutterPack.hdf5')
 	if not self.clutterpack_exists:
 		self.InitClutterPack()
         f = h5py.File('ClutterPack.hdf5', 'r')
         self.clutterPack = f['clutterIMG'][:]
+        self.buff_ptr = 0
+        self.buff_size = 2000
+        self.buff_cap = 0
+        self.buff_data = np.zeros((self.buff_size, self.seq_length_, self.image_size_, self.image_size_), dtype=np.float32)
+        self.buff_label = np.zeros((self.buff_size, self.seq_length_, 4))
+ 
 
     def GetBatchSize(self):
         return self.batch_size_
@@ -155,52 +162,71 @@ class BouncingMNIST(object):
             clutter = self.Overlap(clutter, single_clutter)
         return clutter
 
+    def getBuff(self):
+        #print 'getBuff ',
+        idx = np.random.randint(0, self.buff_cap)
+        return self.buff_data[idx], self.buff_label[idx]
+
+    def setBuff(self, data, label):
+        self.buff_data[self.buff_ptr]=data
+        self.buff_label[self.buff_ptr]=label
+        if self.buff_cap < self.buff_size:
+            self.buff_cap += 1
+        self.buff_ptr += 1
+        self.buff_ptr = self.buff_ptr % self.buff_size
+
     def GetBatch(self, verbose=False, count=1):
         start_y, start_x = self.GetRandomTrajectory(self.batch_size_ * self.num_digits_)
         window_y, window_x = self.GetRandomTrajectory(self.batch_size_ * 1, self.image_size_*2, object_size_=self.image_size_, step_length_ = 1e-2)
         # TODO: change data to real image or cluttered background
         data = np.zeros((self.batch_size_, self.seq_length_, self.image_size_, self.image_size_), dtype=np.float32)
         label = np.zeros((self.batch_size_, self.seq_length_, 4))
-        for j in range(self.batch_size_):
-            for n in range(self.num_digits_):
-                ind = self.indices_[self.row_]
-                self.row_ += 1
-                if self.row_ == self.data_.shape[0]:
-                    self.row_ = 0
-                    np.random.shuffle(self.indices_)
-                if count == 2:
-                    digit_image = np.zeros((self.data_.shape[1], self.data_.shape[2]))
-                    digit_image[:18, :18] = self.Overlap(digit_image[:18, :18], np.maximum.reduceat(np.maximum.reduceat(self.data_[ind], np.cast[int](np.arange(1, 28, 1.5))), np.cast[int](np.arange(1, 28, 1.5)), axis=1))
-                    digit_image[10:, 10:] = self.Overlap(digit_image[10:, 10:], np.maximum.reduceat(np.maximum.reduceat(self.data_[np.random.randint(self.data_.shape[0])], np.cast[int](np.arange(0, 27, 1.5))), np.cast[int](np.arange(0, 27, 1.5)), axis=1))
-                else:
-                    digit_image = self.data_[ind, :, :] / 255.0 * np.random.uniform(self.face_intensity_min, self.face_intensity_max)
-                digit_image_nonzero = digit_image.nonzero()
-                label_offset = np.array([digit_image_nonzero[0].min(), digit_image_nonzero[1].min(), digit_image_nonzero[0].max(), digit_image_nonzero[1].max()])
-                clutter = self.GetClutter(fake=True)
-                clutter_bg = self.GetClutter(fake=True)
-                bak_digit_image = digit_image 
-                digit_size_ = self.digit_size_
-                for i in range(self.seq_length_):
-                    scale_factor = np.exp((np.random.random_sample()-0.5)*self.scale_range)
-                    scale_image = spn.zoom(digit_image, scale_factor)
-                    digit_size_ = digit_size_ * scale_factor 
-                    top    = start_y[i, j * self.num_digits_ + n]
-                    left   = start_x[i, j * self.num_digits_ + n]
-                    if digit_size_!=np.shape(scale_image)[0]:
-                        digit_size_ = np.shape(scale_image)[0]
-                    bottom = top  + digit_size_
-                    right  = left + digit_size_
-                    if right>self.image_size_ or bottom>self.image_size_:
-                        scale_image = bak_digit_image
-                        bottom = top  + self.digit_size_
-                        right  = left + self.digit_size_
-                        digit_size_ = self.digit_size_
-                    digit_image = scale_image
+        for j in range(self.batch_size_): 
+            if np.random.random()<0.7 and self.buff and self.buff_cap > self.buff_size/2.0:
+                data[j], label[j] = self.getBuff()
+                continue
+            else:
+                for n in range(self.num_digits_):
+                    ind = self.indices_[self.row_]
+                    self.row_ += 1
+                    if self.row_ == self.data_.shape[0]:
+                        self.row_ = 0
+                        np.random.shuffle(self.indices_)
+                    if count == 2:
+                        digit_image = np.zeros((self.data_.shape[1], self.data_.shape[2]))
+                        digit_image[:18, :18] = self.Overlap(digit_image[:18, :18], np.maximum.reduceat(np.maximum.reduceat(self.data_[ind], np.cast[int](np.arange(1, 28, 1.5))), np.cast[int](np.arange(1, 28, 1.5)), axis=1))
+                        digit_image[10:, 10:] = self.Overlap(digit_image[10:, 10:], np.maximum.reduceat(np.maximum.reduceat(self.data_[np.random.randint(self.data_.shape[0])], np.cast[int](np.arange(0, 27, 1.5))), np.cast[int](np.arange(0, 27, 1.5)), axis=1))
+                    else:
+                        digit_image = self.data_[ind, :, :] / 255.0 * np.random.uniform(self.face_intensity_min, self.face_intensity_max)
+                    digit_image_nonzero = digit_image.nonzero()
+                    label_offset = np.array([digit_image_nonzero[0].min(), digit_image_nonzero[1].min(), digit_image_nonzero[0].max(), digit_image_nonzero[1].max()])
+                    clutter = self.GetClutter(fake=True)
+                    clutter_bg = self.GetClutter(fake=True)
+                    bak_digit_image = digit_image 
+                    digit_size_ = self.digit_size_
+                    for i in range(self.seq_length_):
+                        scale_factor = np.exp((np.random.random_sample()-0.5)*self.scale_range)
+                        scale_image = spn.zoom(digit_image, scale_factor)
+                        digit_size_ = digit_size_ * scale_factor 
+                        top    = start_y[i, j * self.num_digits_ + n]
+                        left   = start_x[i, j * self.num_digits_ + n]
+                        if digit_size_!=np.shape(scale_image)[0]:
+                            digit_size_ = np.shape(scale_image)[0]
+                        bottom = top  + digit_size_
+                        right  = left + digit_size_
+                        if right>self.image_size_ or bottom>self.image_size_:
+                            scale_image = bak_digit_image
+                            bottom = top  + self.digit_size_
+                            right  = left + self.digit_size_
+                            digit_size_ = self.digit_size_
+                        digit_image = scale_image
  
-                    wy=window_y[i, j]
-                    wx=window_x[i, j]
-                    data[j, i, top:bottom, left:right] = self.Overlap(data[j, i, top:bottom, left:right], scale_image)
-                    data[j, i] = self.Overlap(clutter_bg[wy:wy+self.image_size_, wx:wx+self.image_size_], data[j, i])
-                    data[j, i] = self.Overlap(data[j, i], clutter[wy:wy+self.image_size_, wx:wx+self.image_size_])
-                    label[j, i] = label_offset + np.array([top, left, top, left])
+                        wy=window_y[i, j]
+                        wx=window_x[i, j]
+                        data[j, i, top:bottom, left:right] = self.Overlap(data[j, i, top:bottom, left:right], scale_image)
+                        data[j, i] = self.Overlap(clutter_bg[wy:wy+self.image_size_, wx:wx+self.image_size_], data[j, i])
+                        data[j, i] = self.Overlap(data[j, i], clutter[wy:wy+self.image_size_, wx:wx+self.image_size_])
+                        label[j, i] = label_offset + np.array([top, left, top, left])
+                if self.buff:
+                    self.setBuff(data[j], label[j])
         return data, label

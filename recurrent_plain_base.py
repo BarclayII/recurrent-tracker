@@ -227,12 +227,13 @@ from data_handler import *
 
 print 'START'
 
+bmnist = BouncingMNIST(1, seq_len, batch_size, img_row, dataset_name+"/inputs", dataset_name+"/targets", acc=acc_scale, scale_range=zoom_scale)
 try:
 	for i in range(0, 50):
 		for j in range(0, 2000):
-			_len = int(RNG.exponential(seq_len - 5) + 5) if variadic_length else seq_len
-			bmnist = BouncingMNIST(1, _len, batch_size, img_row, dataset_name+"/inputs", dataset_name+"/targets", acc=acc_scale, scale_range=zoom_scale)
-			data, label = bmnist.GetBatch(count = 2 if double_mnist else 1)
+                        _len = seq_len
+			#_len = int(RNG.exponential(seq_len - 5) + 5) if variadic_length else seq_len	
+		        data, label = bmnist.GetBatch(count = 2 if double_mnist else 1)
 			data = data[:, :, NP.newaxis, :, :] / 255.0
 			label = label / (img_row / 2.) - 1.
 			cost, bbox_seq = train(_len, data, label[:, 0, :], label)
