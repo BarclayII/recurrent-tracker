@@ -1,3 +1,4 @@
+
 import theano as T
 import theano.tensor as TT
 import theano.tensor.nnet as NN
@@ -73,7 +74,7 @@ img_col = 100
 attention_row = 25
 attention_col = 25
 gru_dim = 80
-seq_len = 200
+seq_len = 20
 model_name = 'model.pkl'
 zero_tail_fc = False
 variadic_length = False
@@ -81,6 +82,7 @@ test = False
 acc_scale = 0
 zoom_scale = 0
 double_mnist = False
+NUM_N = 5
 dataset_name = "train"
 ### CONFIGURATION END
 
@@ -136,6 +138,8 @@ except:
 conv1_output_dim = ((img_row - conv1_filter_row) / conv1_stride + 1) * \
 		((img_col - conv1_filter_col) / conv1_stride + 1) * \
 		conv1_nr_filters
+print conv1_output_dim
+
 gru_input_dim = conv1_output_dim + 4
 ### Computed hyperparameters end
 
@@ -154,14 +158,41 @@ Ug = T.shared(orthogonal((gru_dim, gru_dim)), name='Ug')
 bg = T.shared(NP.zeros((gru_dim,), dtype=T.config.floatX), name='bg')
 W_fc2 = T.shared(glorot_uniform((gru_dim, 4)) if not zero_tail_fc else NP.zeros((gru_dim, 4), dtype=T.config.floatX), name='W_fc2')
 b_fc2 = T.shared(NP.zeros((4,), dtype=T.config.floatX), name='b_fc2')
+W_fc3 = T.shared(glorot_uniform((gru_dim, 3)), name='W_fc2')
+b_fc3 = T.shared(NP.zeros((3,), dtype=T.config.floatX), name='b_fc2')
+
 ### NETWORK PARAMETERS END
 
 print 'Building network'
 
+def gauss2D(shape, u, sigma, stride):
+    """
+    2D gaussian mask for tensor
+    """
+    m,n = [(ss-1.)/2. for ss in shape]
+    y,x = NP.ogrid[-m:m+1,-n:n+1]
+    y = y.astype('float32')
+    x = x.astype('float32')
+    epsi = 1e-8
+    h=TT.exp(-((x-u[0])*(x-u[0])/(sigma[0]*2.0+epsi)+(y-u[1])*(y-u[1])/(sigma[1]*2.0+epsi)))
+    for i in xrange(0, NUM_N):
+        for j in xrange(0, NUM_N):
+            h=h+TT.exp( -((x-u[0]-i*stride[0])*(x-u[0]-i*stride[0])/(sigma[0]*2.0+epsi)+(y-u[1]-j*stride[1])*(y-u[1]-j*stride[1])/(sigma[1]*2.0+epsi)))
+    h /= (NUM_N*NUM_N+1)*h.sum()
+    return h
+
 ### Recurrent step
 # img: of shape (batch_size, nr_channels, img_rows, img_cols)
-def _step(img, prev_bbox, state):
-	# of (batch_size, nr_filters, some_rows, some_cols)
+def _step(img, prev_bbox, prev_att, state):
+	# of (batch_size, nr_filters, some_rows, some_cols)	
+	cx = (prev_bbox[:,2]+prev_bbox[:,0])/2.0
+	cy = (prev_bbox[:,3]+prev_bbox[:,1])/2.0
+	sigma = prev_att[:, 0]
+	strideH = prev_att[:, 1]
+	strideW = prev_att[:, 2]
+	for i in xrange(batch_size):
+		g2D=gauss2D((img_row, img_col), (cy[i], cx[i]), (sigma[i], sigma[i]), (strideH[i], strideW[i]))
+		TT.set_subtensor(img[i], g2D*img[i])
 	conv1 = conv2d(img, conv1_filters, subsample=(conv1_stride, conv1_stride))
 	act1 = TT.tanh(conv1)
 	flat1 = TT.reshape(act1, (batch_size, conv1_output_dim))
@@ -171,18 +202,20 @@ def _step(img, prev_bbox, state):
 	gru_h_ = TT.tanh(TT.dot(gru_in, Wg) + TT.dot(gru_r * state, Ug) + bg)
 	gru_h = (1-gru_z) * state + gru_z * gru_h_
 	bbox = TT.tanh(TT.dot(gru_h, W_fc2) + b_fc2)
-	return bbox, gru_h
+	att = NN.relu(TT.dot(gru_h, W_fc3) + b_fc3)
+	return bbox, att, gru_h
 
 # imgs: of shape (batch_size, seq_len, nr_channels, img_rows, img_cols)
 imgs = tensor5()
 starts = TT.matrix()
+startAtt = TT.matrix()
 
 # Move the time axis to the top
 _imgs = imgs.dimshuffle(1, 0, 2, 3, 4)
-sc, _ = T.scan(_step, sequences=[imgs.dimshuffle(1, 0, 2, 3, 4)], outputs_info=[starts, TT.zeros((batch_size, gru_dim))])
+sc,_ = T.scan(_step, sequences=[imgs.dimshuffle(1, 0, 2, 3, 4)], outputs_info=[starts, startAtt, TT.zeros((batch_size, gru_dim))])
 
 bbox_seq = sc[0].dimshuffle(1, 0, 2)
-
+att_seq = sc[1].dimshuffle(1, 0, 2)
 # targets: of shape (batch_size, seq_len, 4)
 targets = TT.tensor3()
 seq_len_scalar = TT.scalar()
@@ -210,8 +243,7 @@ def rmsprop(cost, params, lr=0.001, rho=0.9, epsilon=1e-6):
 
 ### RMSprop end
 
-train = T.function([seq_len_scalar, imgs, starts, targets], [cost, bbox_seq], updates=rmsprop(cost, params) if not test else None, allow_input_downcast=True)
-
+train = T.function([seq_len_scalar, imgs, starts, startAtt, targets], [cost, bbox_seq, att_seq], updates=rmsprop(cost, params) if not test else None, allow_input_downcast=True)
 import cPickle
 
 if test:
@@ -235,7 +267,11 @@ try:
 		        data, label = bmnist.GetBatch(count = 2 if double_mnist else 1)
 			data = data[:, :, NP.newaxis, :, :] / 255.0
 			label = label / (img_row / 2.) - 1.
-			cost, bbox_seq = train(_len, data, label[:, 0, :], label)
+			att = np.zeros(np.shape(label[:,0,0:3]))
+			att[:,0] = 1000
+			att[:,1:2] = 20
+			cost, bbox_seq, att_seq = train(_len, data, label[:, 0, :], att, label)
+			print 'Attention, sigma, strideH, strideW', NP.mean(att_seq, axis=1)
 			left = NP.max([bbox_seq[:, :, 0], label[:, :, 0]], axis=0)
 			top = NP.max([bbox_seq[:, :, 1], label[:, :, 1]], axis=0)
 			right = NP.min([bbox_seq[:, :, 2], label[:, :, 2]], axis=0)

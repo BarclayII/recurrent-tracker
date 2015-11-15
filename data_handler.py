@@ -35,14 +35,14 @@ class BouncingMNIST(object):
         self.acc_scale = acc
         self.vel_scale = vel
         np.random.shuffle(self.indices_)
-        self.num_clutterPack = 10000
+        self.num_clutterPack = 1000
         self.clutterpack_exists=  os.path.exists('ClutterPack.hdf5')
         if not self.clutterpack_exists:
             self.InitClutterPack()
         f = h5py.File('ClutterPack.hdf5', 'r')
         self.clutterPack = f['clutterIMG'][:]
         self.buff_ptr = 0
-        self.buff_size = 2000
+        self.buff_size = 200
         self.buff_cap = 0
         self.buff_data = np.zeros((self.buff_size, self.seq_length_, self.image_size_, self.image_size_), dtype=np.float32)
         self.buff_label = np.zeros((self.buff_size, self.seq_length_, 4))
