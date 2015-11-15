@@ -158,8 +158,8 @@ Ug = T.shared(orthogonal((gru_dim, gru_dim)), name='Ug')
 bg = T.shared(NP.zeros((gru_dim,), dtype=T.config.floatX), name='bg')
 W_fc2 = T.shared(glorot_uniform((gru_dim, 4)) if not zero_tail_fc else NP.zeros((gru_dim, 4), dtype=T.config.floatX), name='W_fc2')
 b_fc2 = T.shared(NP.zeros((4,), dtype=T.config.floatX), name='b_fc2')
-W_fc3 = T.shared(glorot_uniform((gru_dim, 3)), name='W_fc2')
-b_fc3 = T.shared(NP.zeros((3,), dtype=T.config.floatX), name='b_fc2')
+W_fc3 = T.shared(glorot_uniform((gru_dim, 2)), name='W_fc2')
+b_fc3 = T.shared(NP.zeros((2,), dtype=T.config.floatX), name='b_fc2')
 
 ### NETWORK PARAMETERS END
 
@@ -174,10 +174,15 @@ def gauss2D(shape, u, sigma, stride):
     y = y.astype('float32')
     x = x.astype('float32')
     epsi = 1e-8
-    h=TT.exp(-((x-u[0])*(x-u[0])/(sigma[0]*2.0+epsi)+(y-u[1])*(y-u[1])/(sigma[1]*2.0+epsi)))
+    stride = (max(img_col, img_row)-1)/(NUM_N-1)*stride
+    uX = (u[0] + 1)/2.0
+    uY = (u[1] + 1)/2.0
+    h=TT.exp( -((x-uX)*(x-uX)/(sigma[0]*2.0+epsi)+(y-uY)*(y-uY)/(sigma[1]*2.0+epsi)))
     for i in xrange(0, NUM_N):
         for j in xrange(0, NUM_N):
-            h=h+TT.exp( -((x-u[0]-i*stride[0])*(x-u[0]-i*stride[0])/(sigma[0]*2.0+epsi)+(y-u[1]-j*stride[1])*(y-u[1]-j*stride[1])/(sigma[1]*2.0+epsi)))
+            uX = (u[0] + 1)/2.0 + (i - NUM_N/2.0 - 0.5) * stride
+            uY = (u[1] + 1)/2.0 + (j - NUM_N/2.0 - 0.5) * stride
+            h=h+TT.exp( -((x-uX)*(x-uX)/(sigma[0]*2.0+epsi)+(y-uY)*(y-uY)/(sigma[1]*2.0+epsi)))
     h /= (NUM_N*NUM_N+1)*h.sum()
     return h
 
@@ -188,10 +193,9 @@ def _step(img, prev_bbox, prev_att, state):
 	cx = (prev_bbox[:,2]+prev_bbox[:,0])/2.0
 	cy = (prev_bbox[:,3]+prev_bbox[:,1])/2.0
 	sigma = prev_att[:, 0]
-	strideH = prev_att[:, 1]
-	strideW = prev_att[:, 2]
+	stride = prev_att[:, 1]
 	for i in xrange(batch_size):
-		g2D=gauss2D((img_row, img_col), (cy[i], cx[i]), (sigma[i], sigma[i]), (strideH[i], strideW[i]))
+		g2D=gauss2D((img_row, img_col), (cy[i], cx[i]), (sigma[i], sigma[i]), (stride[i]))
 		TT.set_subtensor(img[i], g2D*img[i])
 	conv1 = conv2d(img, conv1_filters, subsample=(conv1_stride, conv1_stride))
 	act1 = TT.tanh(conv1)
@@ -267,9 +271,9 @@ try:
 		        data, label = bmnist.GetBatch(count = 2 if double_mnist else 1)
 			data = data[:, :, NP.newaxis, :, :] / 255.0
 			label = label / (img_row / 2.) - 1.
-			att = np.zeros(np.shape(label[:,0,0:3]))
+			att = np.zeros(np.shape(label[:,0,0:2]))
 			att[:,0] = 1000
-			att[:,1:2] = 20
+			att[:,1] = 1
 			cost, bbox_seq, att_seq = train(_len, data, label[:, 0, :], att, label)
 			print 'Attention, sigma, strideH, strideW', NP.mean(att_seq, axis=1)
 			left = NP.max([bbox_seq[:, :, 0], label[:, :, 0]], axis=0)
