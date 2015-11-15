@@ -1,3 +1,4 @@
+
 import theano as T
 import theano.tensor as TT
 import theano.tensor.nnet as NN
@@ -66,14 +67,14 @@ batch_size = 32
 conv1_nr_filters = 32
 conv1_filter_row = 10
 conv1_filter_col = 10
-conv1_stride = 1
+conv1_stride = 5
 img_row = 100
 img_col = 100
 # attentions are unused yet
 attention_row = 25
 attention_col = 25
-gru_dim = 256
-seq_len = 200
+gru_dim = 80
+seq_len = 20
 model_name = 'model.pkl'
 zero_tail_fc = False
 variadic_length = False
@@ -81,9 +82,8 @@ test = False
 acc_scale = 0
 zoom_scale = 0
 double_mnist = False
+NUM_N = 5
 dataset_name = "train"
-clutter_move = 0.5
-with_clutters = 1
 ### CONFIGURATION END
 
 ### getopt begin
@@ -92,7 +92,7 @@ import sys
 
 try:
 	opts, args = getopt(sys.argv[1:], "", ["batch_size=", "conv1_nr_filters=", "conv1_filter_size=", "conv1_stride=", "img_size=", "gru_dim=", "seq_len=", "use_cudnn", "zero_tail_fc", "var_len", "test", "acc_scale=",
-		"zoom_scale=", "dataset=", "double_mnist", "clutter_static"])
+		"zoom_scale=", "dataset=", "double_mnist"])
 	for opt in opts:
 		if opt[0] == "--batch_size":
 			batch_size = int(opt[1])
@@ -128,8 +128,6 @@ try:
 			double_mnist = True
 		elif opt[0] == "--dataset":
 			dataset_name = opt[1]
-		elif opt[0] == "--clutter_static":
-			clutter_move = False
 	if len(args) > 0:
 		model_name = args[0]
 except:
@@ -140,6 +138,8 @@ except:
 conv1_output_dim = ((img_row - conv1_filter_row) / conv1_stride + 1) * \
 		((img_col - conv1_filter_col) / conv1_stride + 1) * \
 		conv1_nr_filters
+print conv1_output_dim
+
 gru_input_dim = conv1_output_dim + 4
 ### Computed hyperparameters end
 
@@ -158,14 +158,45 @@ Ug = T.shared(orthogonal((gru_dim, gru_dim)), name='Ug')
 bg = T.shared(NP.zeros((gru_dim,), dtype=T.config.floatX), name='bg')
 W_fc2 = T.shared(glorot_uniform((gru_dim, 4)) if not zero_tail_fc else NP.zeros((gru_dim, 4), dtype=T.config.floatX), name='W_fc2')
 b_fc2 = T.shared(NP.zeros((4,), dtype=T.config.floatX), name='b_fc2')
+W_fc3 = T.shared(glorot_uniform((gru_dim, 2)), name='W_fc2')
+b_fc3 = T.shared(NP.zeros((2,), dtype=T.config.floatX), name='b_fc2')
+
 ### NETWORK PARAMETERS END
 
 print 'Building network'
 
+def gauss2D(shape, u, sigma, stride):
+    """
+    2D gaussian mask for tensor
+    """
+    m,n = [(ss-1.)/2. for ss in shape]
+    y,x = NP.ogrid[-m:m+1,-n:n+1]
+    y = y.astype('float32')
+    x = x.astype('float32')
+    epsi = 1e-8
+    stride = (max(img_col, img_row)-1)/(NUM_N-1)*stride
+    uX = (u[0] + 1)/2.0
+    uY = (u[1] + 1)/2.0
+    h=TT.exp( -((x-uX)*(x-uX)/(sigma[0]*2.0+epsi)+(y-uY)*(y-uY)/(sigma[1]*2.0+epsi)))
+    for i in xrange(0, NUM_N):
+        for j in xrange(0, NUM_N):
+            uX = (u[0] + 1)/2.0 + (i - NUM_N/2.0 - 0.5) * stride
+            uY = (u[1] + 1)/2.0 + (j - NUM_N/2.0 - 0.5) * stride
+            h=h+TT.exp( -((x-uX)*(x-uX)/(sigma[0]*2.0+epsi)+(y-uY)*(y-uY)/(sigma[1]*2.0+epsi)))
+    h /= (NUM_N*NUM_N+1)*h.sum()
+    return h
+
 ### Recurrent step
 # img: of shape (batch_size, nr_channels, img_rows, img_cols)
-def _step(img, prev_bbox, state):
-	# of (batch_size, nr_filters, some_rows, some_cols)
+def _step(img, prev_bbox, prev_att, state):
+	# of (batch_size, nr_filters, some_rows, some_cols)	
+	cx = (prev_bbox[:,2]+prev_bbox[:,0])/2.0
+	cy = (prev_bbox[:,3]+prev_bbox[:,1])/2.0
+	sigma = prev_att[:, 0]
+	stride = prev_att[:, 1]
+	for i in xrange(batch_size):
+		g2D=gauss2D((img_row, img_col), (cy[i], cx[i]), (sigma[i], sigma[i]), (stride[i]))
+		TT.set_subtensor(img[i], g2D*img[i])
 	conv1 = conv2d(img, conv1_filters, subsample=(conv1_stride, conv1_stride))
 	act1 = TT.tanh(conv1)
 	flat1 = TT.reshape(act1, (batch_size, conv1_output_dim))
@@ -175,18 +206,20 @@ def _step(img, prev_bbox, state):
 	gru_h_ = TT.tanh(TT.dot(gru_in, Wg) + TT.dot(gru_r * state, Ug) + bg)
 	gru_h = (1-gru_z) * state + gru_z * gru_h_
 	bbox = TT.tanh(TT.dot(gru_h, W_fc2) + b_fc2)
-	return bbox, gru_h
+	att = NN.relu(TT.dot(gru_h, W_fc3) + b_fc3)
+	return bbox, att, gru_h
 
 # imgs: of shape (batch_size, seq_len, nr_channels, img_rows, img_cols)
 imgs = tensor5()
 starts = TT.matrix()
+startAtt = TT.matrix()
 
 # Move the time axis to the top
 _imgs = imgs.dimshuffle(1, 0, 2, 3, 4)
-sc, _ = T.scan(_step, sequences=[imgs.dimshuffle(1, 0, 2, 3, 4)], outputs_info=[starts, TT.zeros((batch_size, gru_dim))])
+sc,_ = T.scan(_step, sequences=[imgs.dimshuffle(1, 0, 2, 3, 4)], outputs_info=[starts, startAtt, TT.zeros((batch_size, gru_dim))])
 
 bbox_seq = sc[0].dimshuffle(1, 0, 2)
-
+att_seq = sc[1].dimshuffle(1, 0, 2)
 # targets: of shape (batch_size, seq_len, 4)
 targets = TT.tensor3()
 seq_len_scalar = TT.scalar()
@@ -197,7 +230,7 @@ print 'Building optimizer'
 
 params = [conv1_filters, Wr, Ur, br, Wz, Uz, bz, Wg, Ug, bg, W_fc2, b_fc2]
 ### RMSProp begin
-def rmsprop(cost, params, lr=0.0005, rho=0.9, epsilon=1e-6):
+def rmsprop(cost, params, lr=0.001, rho=0.9, epsilon=1e-6):
 	'''
 	Borrowed from keras, no constraints, though
 	'''
@@ -214,34 +247,35 @@ def rmsprop(cost, params, lr=0.0005, rho=0.9, epsilon=1e-6):
 
 ### RMSprop end
 
-train = T.function([seq_len_scalar, imgs, starts, targets], [cost, bbox_seq], updates=rmsprop(cost, params) if not test else None, allow_input_downcast=True)
-tester = T.function([seq_len_scalar, imgs, starts, targets], [cost, bbox_seq], allow_input_downcast=True)
-
+train = T.function([seq_len_scalar, imgs, starts, startAtt, targets], [cost, bbox_seq, att_seq], updates=rmsprop(cost, params) if not test else None, allow_input_downcast=True)
 import cPickle
 
-try:
-    f = open(model_name, "rb")
-    param_saved = cPickle.load(f)
-    for _p, p in zip(params, param_saved):
-        _p.set_value(p)
-except IOError:
-    pass
+if test:
+	f = open(model_name, "rb")
+	param_saved = cPickle.load(f)
+	for _p, p in zip(params, param_saved):
+		_p.set_value(p)
 
 print 'Generating dataset'
 
-from data_handler_n import *
+from data_handler import *
 
-bmnist = BouncingMNIST(2, seq_len, batch_size, img_row, dataset_name+"/inputs", dataset_name+"/targets", acc=acc_scale, scale_range=zoom_scale, clutter_move = clutter_move, with_clutters = with_clutters)
 print 'START'
 
+bmnist = BouncingMNIST(1, seq_len, batch_size, img_row, dataset_name+"/inputs", dataset_name+"/targets", acc=acc_scale, scale_range=zoom_scale)
 try:
 	for i in range(0, 50):
-                train_cost = test_cost = 0
 		for j in range(0, 2000):
-			data, label = bmnist.GetBatch(count = 2 if double_mnist else 1)
+                        _len = seq_len
+			#_len = int(RNG.exponential(seq_len - 5) + 5) if variadic_length else seq_len	
+		        data, label = bmnist.GetBatch(count = 2 if double_mnist else 1)
 			data = data[:, :, NP.newaxis, :, :] / 255.0
 			label = label / (img_row / 2.) - 1.
-			cost, bbox_seq = train(seq_len, data, label[:, 0, :], label)
+			att = np.zeros(np.shape(label[:,0,0:2]))
+			att[:,0] = 1000
+			att[:,1] = 1
+			cost, bbox_seq, att_seq = train(_len, data, label[:, 0, :], att, label)
+			print 'Attention, sigma, strideH, strideW', NP.mean(att_seq, axis=1)
 			left = NP.max([bbox_seq[:, :, 0], label[:, :, 0]], axis=0)
 			top = NP.max([bbox_seq[:, :, 1], label[:, :, 1]], axis=0)
 			right = NP.min([bbox_seq[:, :, 2], label[:, :, 2]], axis=0)
@@ -251,32 +285,10 @@ try:
 			predict_area = (bbox_seq[:, :, 2] - bbox_seq[:, :, 0]) * (bbox_seq[:, :, 2] - bbox_seq[:, :, 0] > 0) * (bbox_seq[:, :, 3] - bbox_seq[:, :, 1]) * (bbox_seq[:, :, 3] - bbox_seq[:, :, 1] > 0)
 			union = label_area + predict_area - intersect
 			print i, j, cost
-                        train_cost += cost
-			bmnist = BouncingMNIST(1, seq_len, batch_size, img_row, "test/inputs", "test/targets", acc=acc_scale, scale_range=zoom_scale)
-			data, label = bmnist.GetBatch(count = 2 if double_mnist else 1)
-			data = data[:, :, NP.newaxis, :, :] / 255.0
-			label = label / (img_row / 2.) - 1.
-			cost, bbox_seq = tester(seq_len, data, label[:, 0, :], label)
-			left = NP.max([bbox_seq[:, :, 0], label[:, :, 0]], axis=0)
-			top = NP.max([bbox_seq[:, :, 1], label[:, :, 1]], axis=0)
-			right = NP.min([bbox_seq[:, :, 2], label[:, :, 2]], axis=0)
-			bottom = NP.min([bbox_seq[:, :, 3], label[:, :, 3]], axis=0)
-			intersect = (right - left) * ((right - left) > 0) * (bottom - top) * ((bottom - top) > 0)
-			label_area = (label[:, :, 2] - label[:, :, 0]) * (label[:, :, 2] - label[:, :, 0] > 0) * (label[:, :, 3] - label[:, :, 1]) * (label[:, :, 3] - label[:, :, 1] > 0)
-			predict_area = (bbox_seq[:, :, 2] - bbox_seq[:, :, 0]) * (bbox_seq[:, :, 2] - bbox_seq[:, :, 0] > 0) * (bbox_seq[:, :, 3] - bbox_seq[:, :, 1]) * (bbox_seq[:, :, 3] - bbox_seq[:, :, 1] > 0)
-			union = label_area + predict_area - intersect
-                        print i, j, cost
-                        test_cost += cost
 			iou = intersect / union
-			print NP.average(iou, axis=0)       # per frame
-			print NP.average(iou, axis=1)       # per batch
-                print 'Epoch average loss (train, test)', train_cost / 2000, test_cost / 2000
-                f = open(model_name + str(i), "wb")
-		cPickle.dump(map(lambda x: x.get_value(), params), f)
-                f.close()
-except KeyboardInterrupt:
+			print NP.average(iou, axis=0)
+finally:
 	if not test:
-		print 'Saving...'
 		f = open(model_name, "wb")
 		cPickle.dump(map(lambda x: x.get_value(), params), f)
 		f.close()
