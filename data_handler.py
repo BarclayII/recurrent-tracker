@@ -4,7 +4,7 @@ import scipy.ndimage as spn
 import os
 
 class BouncingMNIST(object):
-    def __init__(self, num_digits, seq_length, batch_size, image_size, dataset_name, target_name, scale_range=0, clutter_size_min = 5, clutter_size_max = 10, num_clutters = 20, face_intensity_min = 64, face_intensity_max = 255, run_flag='', acc=0, vel=1, buff=True):
+    def __init__(self, num_digits, seq_length, batch_size, image_size, dataset_name, target_name, scale_range=0, clutter_size_min = 5, clutter_size_max = 10, num_clutters = 20, face_intensity_min = 64, face_intensity_max = 255, run_flag='', acc=0, vel=1, buff=True, clutter_move=1, with_clutters=1):
         self.seq_length_ = seq_length
         self.batch_size_ = batch_size
         self.image_size_ = image_size
@@ -46,6 +46,8 @@ class BouncingMNIST(object):
         self.buff_cap = 0
         self.buff_data = np.zeros((self.buff_size, self.seq_length_, self.image_size_, self.image_size_), dtype=np.float32)
         self.buff_label = np.zeros((self.buff_size, self.seq_length_, 4))
+        self.clutter_move = clutter_move
+        self.with_clutters = with_clutters
  
 
     def GetBatchSize(self):
@@ -187,10 +189,19 @@ class BouncingMNIST(object):
             else:
                 clutter = self.GetClutter(fake=True)
                 clutter_bg = self.GetClutter(fake=True)
-                for i in range(self.seq_length_):
-                    wx = window_x[i,j]
-                    wy = window_y[i,j]
-                    data[j, i] = self.Overlap(clutter_bg[wy:wy+self.image_size_, wx:wx+self.image_size_], data[j, i])
+                wc = np.random.ranf() < self.with_clutters
+                cm = np.random.ranf() < self.clutter_move
+                if wc:
+                    if cm:
+                        for i in range(self.seq_length_):
+                            wx = window_x[i,j]
+                            wy = window_y[i,j]
+                            data[j, i] = self.Overlap(clutter_bg[wy:wy+self.image_size_, wx:wx+self.image_size_], data[j, i])
+                    else:
+                        for i in range(self.seq_length_):
+                            wx = window_x[0, j]
+                            wy = window_y[0, j]
+                            data[j, i] = self.Overlap(clutter_bg[wy:wy+self.image_size_, wx:wx+self.image_size_], data[j, i])
                 for n in range(self.num_digits_):
                     ind = self.indices_[self.row_]
                     self.row_ += 1
@@ -229,10 +240,17 @@ class BouncingMNIST(object):
                         data[j, i, top:bottom, left:right] = self.Overlap(data[j, i, top:bottom, left:right], scale_image)
                         data[j, i] = self.Overlap(data[j, i], clutter[wy:wy+self.image_size_, wx:wx+self.image_size_])
                         label[j, i] = label_offset + np.array([top, left, top, left])
-                for i in range(self.seq_length_):
-                    wx = window_x[i,j]
-                    wy = window_y[i,j]
-                    data[j, i] = self.Overlap(data[j, i], clutter[wy:wy+self.image_size_, wx:wx+self.image_size_])
+                if wc:
+                    if cm:
+                        for i in range(self.seq_length_):
+                            wx = window_x[i,j]
+                            wy = window_y[i,j]
+                            data[j, i] = self.Overlap(data[j, i], clutter[wy:wy+self.image_size_, wx:wx+self.image_size_])
+                    else:
+                        for i in range(self.seq_length_):
+                            wx = window_x[0,j]
+                            wy = window_y[0,j]
+                            data[j, i] = self.Overlap(data[j, i], clutter[wy:wy+self.image_size_, wx:wx+self.image_size_])
                 if self.buff:
                     self.setBuff(data[j], label[j])
         return data, label

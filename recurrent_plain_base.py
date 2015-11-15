@@ -67,13 +67,13 @@ batch_size = 32
 conv1_nr_filters = 32
 conv1_filter_row = 10
 conv1_filter_col = 10
-conv1_stride = 5
+conv1_stride = 1
 img_row = 100
 img_col = 100
 # attentions are unused yet
 attention_row = 25
 attention_col = 25
-gru_dim = 80
+gru_dim = 256
 seq_len = 200
 model_name = 'model.pkl'
 zero_tail_fc = False
@@ -83,6 +83,8 @@ acc_scale = 0
 zoom_scale = 0
 double_mnist = False
 dataset_name = "train"
+clutter_move = 0.5
+with_clutters = 1
 ### CONFIGURATION END
 
 ### getopt begin
@@ -91,7 +93,7 @@ import sys
 
 try:
 	opts, args = getopt(sys.argv[1:], "", ["batch_size=", "conv1_nr_filters=", "conv1_filter_size=", "conv1_stride=", "img_size=", "gru_dim=", "seq_len=", "use_cudnn", "zero_tail_fc", "var_len", "test", "acc_scale=",
-		"zoom_scale=", "dataset=", "double_mnist"])
+		"zoom_scale=", "dataset=", "double_mnist", "clutter_static"])
 	for opt in opts:
 		if opt[0] == "--batch_size":
 			batch_size = int(opt[1])
@@ -127,6 +129,8 @@ try:
 			double_mnist = True
 		elif opt[0] == "--dataset":
 			dataset_name = opt[1]
+		elif opt[0] == "--clutter_static":
+			clutter_move = False
 	if len(args) > 0:
 		model_name = args[0]
 except:
@@ -194,7 +198,7 @@ print 'Building optimizer'
 
 params = [conv1_filters, Wr, Ur, br, Wz, Uz, bz, Wg, Ug, bg, W_fc2, b_fc2]
 ### RMSProp begin
-def rmsprop(cost, params, lr=0.001, rho=0.9, epsilon=1e-6):
+def rmsprop(cost, params, lr=0.0005, rho=0.9, epsilon=1e-6):
 	'''
 	Borrowed from keras, no constraints, though
 	'''
@@ -212,31 +216,33 @@ def rmsprop(cost, params, lr=0.001, rho=0.9, epsilon=1e-6):
 ### RMSprop end
 
 train = T.function([seq_len_scalar, imgs, starts, targets], [cost, bbox_seq], updates=rmsprop(cost, params) if not test else None, allow_input_downcast=True)
+tester = T.function([seq_len_scalar, imgs, starts, targets], [cost, bbox_seq], allow_input_downcast=True)
 
 import cPickle
 
-if test:
-	f = open(model_name, "rb")
-	param_saved = cPickle.load(f)
-	for _p, p in zip(params, param_saved):
-		_p.set_value(p)
+try:
+    f = open(model_name, "rb")
+    param_saved = cPickle.load(f)
+    for _p, p in zip(params, param_saved):
+        _p.set_value(p)
+except IOError:
+    pass
 
 print 'Generating dataset'
 
-from data_handler import *
+from data_handler_n import *
 
+bmnist = BouncingMNIST(2, seq_len, batch_size, img_row, dataset_name+"/inputs", dataset_name+"/targets", acc=acc_scale, scale_range=zoom_scale, clutter_move = clutter_move, with_clutters = with_clutters)
 print 'START'
 
-bmnist = BouncingMNIST(1, seq_len, batch_size, img_row, dataset_name+"/inputs", dataset_name+"/targets", acc=acc_scale, scale_range=zoom_scale)
 try:
 	for i in range(0, 50):
+                train_cost = test_cost = 0
 		for j in range(0, 2000):
-                        _len = seq_len
-			#_len = int(RNG.exponential(seq_len - 5) + 5) if variadic_length else seq_len	
-		        data, label = bmnist.GetBatch(count = 2 if double_mnist else 1)
+			data, label = bmnist.GetBatch(count = 2 if double_mnist else 1)
 			data = data[:, :, NP.newaxis, :, :] / 255.0
 			label = label / (img_row / 2.) - 1.
-			cost, bbox_seq = train(_len, data, label[:, 0, :], label)
+			cost, bbox_seq = train(seq_len, data, label[:, 0, :], label)
 			left = NP.max([bbox_seq[:, :, 0], label[:, :, 0]], axis=0)
 			top = NP.max([bbox_seq[:, :, 1], label[:, :, 1]], axis=0)
 			right = NP.min([bbox_seq[:, :, 2], label[:, :, 2]], axis=0)
@@ -246,10 +252,32 @@ try:
 			predict_area = (bbox_seq[:, :, 2] - bbox_seq[:, :, 0]) * (bbox_seq[:, :, 2] - bbox_seq[:, :, 0] > 0) * (bbox_seq[:, :, 3] - bbox_seq[:, :, 1]) * (bbox_seq[:, :, 3] - bbox_seq[:, :, 1] > 0)
 			union = label_area + predict_area - intersect
 			print i, j, cost
+                        train_cost += cost
+			bmnist = BouncingMNIST(1, seq_len, batch_size, img_row, "test/inputs", "test/targets", acc=acc_scale, scale_range=zoom_scale)
+			data, label = bmnist.GetBatch(count = 2 if double_mnist else 1)
+			data = data[:, :, NP.newaxis, :, :] / 255.0
+			label = label / (img_row / 2.) - 1.
+			cost, bbox_seq = tester(seq_len, data, label[:, 0, :], label)
+			left = NP.max([bbox_seq[:, :, 0], label[:, :, 0]], axis=0)
+			top = NP.max([bbox_seq[:, :, 1], label[:, :, 1]], axis=0)
+			right = NP.min([bbox_seq[:, :, 2], label[:, :, 2]], axis=0)
+			bottom = NP.min([bbox_seq[:, :, 3], label[:, :, 3]], axis=0)
+			intersect = (right - left) * ((right - left) > 0) * (bottom - top) * ((bottom - top) > 0)
+			label_area = (label[:, :, 2] - label[:, :, 0]) * (label[:, :, 2] - label[:, :, 0] > 0) * (label[:, :, 3] - label[:, :, 1]) * (label[:, :, 3] - label[:, :, 1] > 0)
+			predict_area = (bbox_seq[:, :, 2] - bbox_seq[:, :, 0]) * (bbox_seq[:, :, 2] - bbox_seq[:, :, 0] > 0) * (bbox_seq[:, :, 3] - bbox_seq[:, :, 1]) * (bbox_seq[:, :, 3] - bbox_seq[:, :, 1] > 0)
+			union = label_area + predict_area - intersect
+                        print i, j, cost
+                        test_cost += cost
 			iou = intersect / union
-			print NP.average(iou, axis=0)
-finally:
+			print NP.average(iou, axis=0)       # per frame
+			print NP.average(iou, axis=1)       # per batch
+                print 'Epoch average loss (train, test)', train_cost / 2000, test_cost / 2000
+                f = open(model_name + str(i), "wb")
+		cPickle.dump(map(lambda x: x.get_value(), params), f)
+                f.close()
+except KeyboardInterrupt:
 	if not test:
+		print 'Saving...'
 		f = open(model_name, "wb")
 		cPickle.dump(map(lambda x: x.get_value(), params), f)
 		f.close()
