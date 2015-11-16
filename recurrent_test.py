@@ -234,7 +234,7 @@ except IOError:
 
 print 'Generating dataset'
 
-from data_handler_n import *
+from data_handler import *
 
 print 'START'
 

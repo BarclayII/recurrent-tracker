@@ -112,7 +112,7 @@ model.add(CORE.Activation(fc2_act))
 
 print 'Building bouncing MNIST generator'
 
-from data_handler_new import *
+from data_handler import *
 
 bmnist = BouncingMNIST(1, seq_len, batch_size, image_size, 'train/inputs', 'train/targets', clutter_size_max = 14, acc = acc_scale, scale_range = zoom_scale, clutter_move = clutter_move)
 bmnist_test = BouncingMNIST(1, seq_len, batch_size, image_size, 'test/inputs', 'test/targets', clutter_size_max = 14, acc = acc_scale, scale_range = zoom_scale, clutter_move = clutter_move)

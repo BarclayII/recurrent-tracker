@@ -229,7 +229,7 @@ except IOError:
 
 print 'Generating dataset'
 
-from data_handler_n import *
+from data_handler import *
 
 bmnist = BouncingMNIST(2, seq_len, batch_size, img_row, dataset_name+"/inputs", dataset_name+"/targets", acc=acc_scale, scale_range=zoom_scale, clutter_move = clutter_move, with_clutters = with_clutters)
 print 'START'
