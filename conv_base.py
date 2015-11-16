@@ -30,7 +30,7 @@ conv1 = True
 conv1_filters = 32
 conv1_filter_size = 10
 conv1_act = 'tanh'
-conv1_stride = 1
+conv1_stride = 5
 
 pool1 = True
 pool1_size = 4
@@ -50,13 +50,11 @@ figure_name = 'loss'
 acc_scale = 0
 zoom_scale = 0
 double_mnist = False
+clutter_move = True
 dataset = "train"
 
-with_clutters = 1
-clutter_move = 0.5
-
 try:
-	opts, args = getopt(sys.argv[1:], "", ["no-conv1", "no-pool1", "conv1_filters=", "conv1_filter_size=", "conv1_act=", "pool1_size=", "conv1_stride=", "fc1_act=", "fc2_act=", "acc_scale=", "zoom_scale=", "double_mnist", "dataset="])
+	opts, args = getopt(sys.argv[1:], "", ["no-conv1", "no-pool1", "conv1_filters=", "conv1_filter_size=", "conv1_act=", "pool1_size=", "conv1_stride=", "fc1_act=", "fc2_act=", "acc_scale=", "zoom_scale=", "double_mnist", "dataset=", "clutter_static"])
 	for opt in opts:
 		if opt[0] == "--no-conv1":
 			conv1 = False
@@ -84,6 +82,8 @@ try:
 			double_mnist = True
 		elif opt[0] == "--dataset":
 			dataset_name = opt[1]
+		elif opt[0] == "--clutter_static":
+			clutter_move = False
 	if len(args) > 0:
 		figure_name = args[0]
 except:
@@ -101,7 +101,7 @@ if conv1:
 	conv_model.add(CORE.Flatten())
         conv_model.add(CORE.Dense(fc1_size))
         conv_model.add(CORE.Activation(fc1_act))
-loc_model.add(CORE.Dense(fc1_size, input_shape=(4,)))
+loc_model.add(CORE.Dense(fc1_size, input_shape=(prev_frames * 4,)))
 loc_model.add(CORE.Activation(fc1_act))
 #model.add(CONV.Convolution2D(conv2_filters, conv2_filter_size, conv2_filter_size, border_mode='valid'))
 #model.add(CONV.MaxPooling2D(pool_size=(pool2_size, pool2_size)))
@@ -112,10 +112,10 @@ model.add(CORE.Activation(fc2_act))
 
 print 'Building bouncing MNIST generator'
 
-from data_handler_n import *
+from data_handler_new import *
 
-bmnist = BouncingMNIST(1, seq_len, batch_size, image_size, 'train/inputs', 'train/targets', clutter_size_max = 14, acc = acc_scale, scale_range = zoom_scale, with_clutters = with_clutters, clutter_move = clutter_move)
-bmnist_test = BouncingMNIST(1, seq_len, batch_size, image_size, 'test/inputs', 'test/targets', clutter_size_max = 14, acc = acc_scale, scale_range = zoom_scale, with_clutters = with_clutters, clutter_move = clutter_move)
+bmnist = BouncingMNIST(1, seq_len, batch_size, image_size, 'train/inputs', 'train/targets', clutter_size_max = 14, acc = acc_scale, scale_range = zoom_scale, clutter_move = clutter_move)
+bmnist_test = BouncingMNIST(1, seq_len, batch_size, image_size, 'test/inputs', 'test/targets', clutter_size_max = 14, acc = acc_scale, scale_range = zoom_scale, clutter_move = clutter_move)
 
 print 'Compiling model'
 
@@ -146,12 +146,15 @@ try:
 			batch += 1
 			_loss = 0
 			iou = NP.zeros((batch_size,))
+                        prev_piece = NP.zeros((batch_size, prev_frames * 4))
 			for i in range(-3, data.shape[1] - 3):
 				data_piece = data[:, i:i + 4]
 				if data_piece.shape[1] == 0:
 					data_piece = NP.zeros(data[:, 0:4].shape)
 					data_piece[:, -i:4] = data[:, 0:i + 4]
-				prev_piece = label[:, 0 if i == -3 else (i + 2)] / (image_size / 2.0) - 1
+				#prev_piece = label[:, 0 if i == -3 else (i + 2)] / (image_size / 2.0) - 1
+                                prev_piece = NP.roll(prev_piece, 4, axis=1)
+                                prev_piece[:, :4] = (label[:, 0] / (image_size / 2.0) - 1) if i == -3 else predict_piece
                                 label_piece = label[:, i + 3] / (image_size / 2.0) - 1
 				predict_piece = model.predict_on_batch([data_piece, prev_piece])
 				loss_piece = ((predict_piece - label_piece) ** 2).sum() / batch_size
@@ -178,12 +181,15 @@ try:
 			data, label = bmnist_test.GetBatch()
 			_loss = 0
 			iou = NP.zeros((batch_size,))
+                        prev_piece = NP.zeros((batch_size, prev_frames * 4))
 			for i in range(-3, data.shape[1] - 3):
 				data_piece = data[:, i:i + 4]
 				if data_piece.shape[1] == 0:
 					data_piece = NP.zeros(data[:, 0:4].shape)
 					data_piece[:, -i:4] = data[:, 0:i + 4]
-				prev_piece = label[:, 0 if i == -3 else (i + 2)] / (image_size / 2.0) - 1
+				#prev_piece = label[:, 0 if i == -3 else (i + 2)] / (image_size / 2.0) - 1
+                                prev_piece = NP.roll(prev_piece, 4, axis=1)
+                                prev_piece[:, :4] = (label[:, 0] / (image_size / 2.0) - 1) if i == -3 else predict_piece
                                 label_piece = label[:, i + 3] / (image_size / 2.0) - 1
 				predict_piece = model.predict_on_batch([data_piece, prev_piece])
 				loss_piece = ((predict_piece - label_piece) ** 2).sum() / batch_size
@@ -209,6 +215,7 @@ try:
 				break
                 print 'Epoch average loss (train, test)', sum(epoch_loss) / epoch_size, sum(epoch_test_loss) / epoch_size
                 epoch_test_loss = []
+		NP.save(str(epoch) + figure_name, epoch_loss)
 		epoch_loss = []
 	        model.save_weights(figure_name + '-model' + str(epoch), overwrite=True)
 		if epoch == nr_epochs:
