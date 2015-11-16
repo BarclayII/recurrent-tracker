@@ -66,7 +66,7 @@ batch_size = 32
 conv1_nr_filters = 32
 conv1_filter_row = 10
 conv1_filter_col = 10
-conv1_stride = 1
+conv1_stride = 5
 img_row = 100
 img_col = 100
 # attentions are unused yet
