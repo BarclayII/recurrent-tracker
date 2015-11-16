@@ -73,7 +73,7 @@ img_col = 100
 # attentions are unused yet
 attention_row = 25
 attention_col = 25
-gru_dim = 80
+gru_dim = 200
 seq_len = 20
 model_name = 'model.pkl'
 zero_tail_fc = False
@@ -174,10 +174,10 @@ def gauss2D(shape, u, sigma, stride):
     y = y.astype('float32')
     x = x.astype('float32')
     epsi = 1e-8
-    stride = (max(img_col, img_row)-1)/(NUM_N-1)*stride
+    stride = (max(img_col, img_row)-1)/(NUM_N-1)*TT.switch(stride>0, stride, -1.0 * stride)
     uX = (u[0] + 1)/2.0
     uY = (u[1] + 1)/2.0
-    h=TT.exp( -((x-uX)*(x-uX)/(sigma[0]*2.0+epsi)+(y-uY)*(y-uY)/(sigma[1]*2.0+epsi)))
+    h=TT.exp( -((x-uX)*(x-uX)/(TT.switch(sigma[0]>0, sigma[0], -1.0 * sigma[0])*2.0+epsi)+(y-uY)*(y-uY)/(TT.switch(sigma[1]>0, sigma[1], -1.0* sigma[1])*2.0+epsi)))
     for i in xrange(0, NUM_N):
         for j in xrange(0, NUM_N):
             uX = (u[0] + 1)/2.0 + (i - NUM_N/2.0 - 0.5) * stride
@@ -206,7 +206,7 @@ def _step(img, prev_bbox, prev_att, state):
 	gru_h_ = TT.tanh(TT.dot(gru_in, Wg) + TT.dot(gru_r * state, Ug) + bg)
 	gru_h = (1-gru_z) * state + gru_z * gru_h_
 	bbox = TT.tanh(TT.dot(gru_h, W_fc2) + b_fc2)
-	att = NN.relu(TT.dot(gru_h, W_fc3) + b_fc3)
+	att = TT.dot(gru_h, W_fc3) + b_fc3
 	return bbox, att, gru_h
 
 # imgs: of shape (batch_size, seq_len, nr_channels, img_rows, img_cols)
@@ -250,11 +250,13 @@ def rmsprop(cost, params, lr=0.001, rho=0.9, epsilon=1e-6):
 train = T.function([seq_len_scalar, imgs, starts, startAtt, targets], [cost, bbox_seq, att_seq], updates=rmsprop(cost, params) if not test else None, allow_input_downcast=True)
 import cPickle
 
-if test:
+try:
 	f = open(model_name, "rb")
 	param_saved = cPickle.load(f)
 	for _p, p in zip(params, param_saved):
 		_p.set_value(p)
+except IOError:
+        pass
 
 print 'Generating dataset'
 
@@ -275,7 +277,7 @@ try:
 			att[:,0] = 1000
 			att[:,1] = 1
 			cost, bbox_seq, att_seq = train(_len, data, label[:, 0, :], att, label)
-			print 'Attention, sigma, strideH, strideW', NP.mean(att_seq, axis=1)
+			print 'Attention, sigma, strideH, strideW', NP.mean(NP.abs(att_seq), axis=1)
 			left = NP.max([bbox_seq[:, :, 0], label[:, :, 0]], axis=0)
 			top = NP.max([bbox_seq[:, :, 1], label[:, :, 1]], axis=0)
 			right = NP.min([bbox_seq[:, :, 2], label[:, :, 2]], axis=0)
@@ -286,7 +288,7 @@ try:
 			union = label_area + predict_area - intersect
 			print i, j, cost
 			iou = intersect / union
-			print NP.average(iou, axis=0)
+			print NP.average(iou, axis=1)
 finally:
 	if not test:
 		f = open(model_name, "wb")
