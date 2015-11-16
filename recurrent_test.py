@@ -1,154 +1,271 @@
 
-import keras.layers.core as CORE
-import keras.layers.convolutional as CONV
-import keras.optimizers as OPT
-import keras.models as MODELS
-import keras.layers.recurrent as RECURRENT
-
 import theano as T
 import theano.tensor as TT
+import theano.tensor.nnet as NN
+import theano.tensor.signal as SIG
 
 import numpy as NP
 import numpy.random as RNG
 
-NP.set_printoptions(suppress=True, precision=10)
+from collections import OrderedDict
 
-from matplotlib import pyplot as PL
+#####################################################################
+# Usage:                                                            #
+# python -u recurrent_plain_base.py [opts] [model_name]             #
+#                                                                   #
+# Options:                                                          #
+#       --batch_size=INTEGER                                        #
+#       --conv1_nr_filters=INTEGER                                  #
+#       --conv1_filter_size=INTEGER                                 #
+#       --conv1_stride=INTEGER                                      #
+#       --img_size=INTEGER                                          #
+#       --gru_dim=INTEGER                                           #
+#       --seq_len=INTEGER                                           #
+#       --use_cudnn     (Set floatX to float32 if you use this)     #
+#       --zero_tail_fc  (Recommended)                               #
+#####################################################################
 
+### Utility functions begin
+def get_fans(shape):
+	'''
+	Borrowed from keras
+	'''
+	fan_in = shape[0] if len(shape) == 2 else NP.prod(shape[1:])
+	fan_out = shape[1] if len(shape) == 2 else shape[0]
+	return fan_in, fan_out
+
+def glorot_uniform(shape):
+	'''
+	Borrowed from keras
+	'''
+	fan_in, fan_out = get_fans(shape)
+	s = NP.sqrt(6. / (fan_in + fan_out))
+	return NP.cast[T.config.floatX](RNG.uniform(low=-s, high=s, size=shape))
+
+def orthogonal(shape, scale=1.1):
+	'''
+	Borrowed from keras
+	'''
+	flat_shape = (shape[0], NP.prod(shape[1:]))
+	a = RNG.normal(0, 1, flat_shape)
+	u, _, v = NP.linalg.svd(a, full_matrices=False)
+	q = u if u.shape == flat_shape else v
+	q = q.reshape(shape)
+	return NP.cast[T.config.floatX](q)
+
+def tensor5(name=None, dtype=None):
+	if dtype == None:
+		dtype = T.config.floatX
+	return TT.TensorType(dtype, [False] * 5, name=name)()
+
+conv2d = NN.conv2d
+
+### Utility functions end
+
+### CONFIGURATION BEGIN
+batch_size = 1
+conv1_nr_filters = 32
+conv1_filter_row = 10
+conv1_filter_col = 10
+conv1_stride = 5
+img_row = 100
+img_col = 100
+# attentions are unused yet
+attention_row = 25
+attention_col = 25
+gru_dim = 200
+seq_len = 20
+model_name = 'model.pkl'
+zero_tail_fc = False
+variadic_length = False
+test = False
+acc_scale = 0
+zoom_scale = 0
+double_mnist = False
+dataset_name = "train"
+nr_objs = 1
+clutter_move = 1
+with_clutters = 1
+### CONFIGURATION END
+
+### getopt begin
 from getopt import *
 import sys
 
-print 'Building model'
+try:
+	opts, args = getopt(sys.argv[1:], "", ["batch_size=", "conv1_nr_filters=", "conv1_filter_size=", "conv1_stride=", "img_size=", "gru_dim=", "seq_len=", "use_cudnn", "zero_tail_fc", "var_len", "test", "acc_scale=",
+		"zoom_scale=", "dataset=", "double_mnist", "nr_objs=", "clutter_static", "without_clutters"])
+	for opt in opts:
+		if opt[0] == "--batch_size":
+			batch_size = int(opt[1])
+		elif opt[0] == "--conv1_nr_filters":
+			conv1_nr_filters = int(opt[1])
+		elif opt[0] == "--conv1_filter_size":
+			conv1_filter_row = conv1_filter_col = int(opt[1])
+		elif opt[0] == "--conv1_stride":
+			conv1_stride = int(opt[1])
+		elif opt[0] == "--img_size":
+			img_row = img_col = int(opt[1])
+		elif opt[0] == "--gru_dim":
+			gru_dim = int(opt[1])
+		elif opt[0] == "--seq_len":
+			seq_len = int(opt[1])
+		elif opt[0] == "--use_cudnn":
+			if T.config.device[:3] == 'gpu':
+				import theano.sandbox.cuda.dnn as CUDNN
+				if CUDNN.dnn_available():
+					print 'Using CUDNN instead of Theano conv2d'
+					conv2d = CUDNN.dnn_conv
+		elif opt[0] == "--zero_tail_fc":
+			zero_tail_fc = True
+		elif opt[0] == "--var_len":
+			variadic_length = True
+		elif opt[0] == "--test":
+			test = True
+		elif opt[0] == "--acc_scale":
+			acc_scale = float(opt[1])
+		elif opt[0] == "--zoom_scale":
+			zoom_scale = float(opt[1])
+		elif opt[0] == "--double_mnist":
+			double_mnist = True
+		elif opt[0] == "--dataset":
+			dataset_name = opt[1]
+                elif opt[0] == "--nr_objs":
+                        nr_objs = int(opt[1])
+                elif opt[0] == "--clutter_static":
+                        clutter_move = 0
+		elif opt[0] == "--without_clutters":
+			with_clutters = 0
+	if len(args) > 0:
+		model_name = args[0]
+except:
+	pass
+### getopt end
 
-seq_len = 15
-#prev_frames = 4
-image_size = 100
-batch_size = 32
-epoch_size = 2000
-nr_epochs = 50
+### Computed hyperparameters begin
+conv1_output_dim = ((img_row - conv1_filter_row) / conv1_stride + 1) * \
+		((img_col - conv1_filter_col) / conv1_stride + 1) * \
+		conv1_nr_filters
+gru_input_dim = conv1_output_dim + 4
+### Computed hyperparameters end
 
-conv1 = True
-conv1_filters = 32
-conv1_filter_size = 10
-conv1_act = 'tanh'
-conv1_stride = 5
+print 'Initializing parameters'
 
-pool1 = True
-pool1_size = 4
+### NETWORK PARAMETERS BEGIN
+conv1_filters = T.shared(glorot_uniform((conv1_nr_filters, 1, conv1_filter_row, conv1_filter_col)), name='conv1_filters')
+Wr = T.shared(glorot_uniform((gru_input_dim, gru_dim)), name='Wr')
+Ur = T.shared(orthogonal((gru_dim, gru_dim)), name='Ur')
+br = T.shared(NP.zeros((gru_dim,), dtype=T.config.floatX), name='br')
+Wz = T.shared(glorot_uniform((gru_input_dim, gru_dim)), name='Wz')
+Uz = T.shared(orthogonal((gru_dim, gru_dim)), name='Uz')
+bz = T.shared(NP.zeros((gru_dim,), dtype=T.config.floatX), name='bz')
+Wg = T.shared(glorot_uniform((gru_input_dim, gru_dim)), name='Wg')
+Ug = T.shared(orthogonal((gru_dim, gru_dim)), name='Ug')
+bg = T.shared(NP.zeros((gru_dim,), dtype=T.config.floatX), name='bg')
+W_fc2 = T.shared(glorot_uniform((gru_dim, 4)) if not zero_tail_fc else NP.zeros((gru_dim, 4), dtype=T.config.floatX), name='W_fc2')
+b_fc2 = T.shared(NP.zeros((4,), dtype=T.config.floatX), name='b_fc2')
+### NETWORK PARAMETERS END
 
-conv2_filters = 32
-conv2_filter_size = 9
-conv2_act = 'tanh'
-pool2_size = 2
+print 'Building network'
 
-fc1_size = 90
-fc1_act = 'tanh'
+### Recurrent step
+# img: of shape (batch_size, nr_channels, img_rows, img_cols)
+def _step(img, prev_bbox, state):
+	# of (batch_size, nr_filters, some_rows, some_cols)
+	conv1 = conv2d(img, conv1_filters, subsample=(conv1_stride, conv1_stride))
+	act1 = TT.tanh(conv1)
+	flat1 = TT.reshape(act1, (batch_size, conv1_output_dim))
+	gru_in = TT.concatenate([flat1, prev_bbox], axis=1)
+	gru_z = NN.sigmoid(TT.dot(gru_in, Wz) + TT.dot(state, Uz) + bz)
+	gru_r = NN.sigmoid(TT.dot(gru_in, Wr) + TT.dot(state, Ur) + br)
+	gru_h_ = TT.tanh(TT.dot(gru_in, Wg) + TT.dot(gru_r * state, Ug) + bg)
+	gru_h = (1-gru_z) * state + gru_z * gru_h_
+	bbox = TT.tanh(TT.dot(gru_h, W_fc2) + b_fc2)
+	return bbox, gru_h
 
-fc2_act = 'tanh'
+# imgs: of shape (batch_size, seq_len, nr_channels, img_rows, img_cols)
+imgs = tensor5()
+starts = TT.matrix()
 
-gru1_size=100
+# Move the time axis to the top
+_imgs = imgs.dimshuffle(1, 0, 2, 3, 4)
+sc, _ = T.scan(_step, sequences=[imgs.dimshuffle(1, 0, 2, 3, 4)], outputs_info=[starts, T.shared(NP.zeros((batch_size, gru_dim), dtype=T.config.floatX))])
 
-figure_name = '50rec_train'
+bbox_seq = sc[0].dimshuffle(1, 0, 2)
 
-print 'Building bouncing MNIST generator'
+# targets: of shape (batch_size, seq_len, 4)
+targets = TT.tensor3()
+seq_len_scalar = TT.scalar()
 
-from data_handler import *
+cost = ((targets - bbox_seq) ** 2).sum() / batch_size / seq_len_scalar
 
-def GenBatch():
-	bmnist = BouncingMNIST(1, seq_len, batch_size, image_size, 'train/inputs', 'train/targets', run_flag='train')
-	while True:
-		yield bmnist.GetBatch()
+print 'Building optimizer'
 
-def GenTestBatch():
-	bmnist = BouncingMNIST(1, seq_len, batch_size, image_size, 'train/inputs', 'train/targets', run_flag='test')
-	while True:
-		yield bmnist.GetBatch()
+params = [conv1_filters, Wr, Ur, br, Wz, Uz, bz, Wg, Ug, bg, W_fc2, b_fc2]
+### RMSProp begin
+def rmsprop(cost, params, lr=0.001, rho=0.9, epsilon=1e-6):
+	'''
+	Borrowed from keras, no constraints, though
+	'''
+	updates = OrderedDict()
+	grads = T.grad(cost, params)
+	acc = [T.shared(NP.zeros(p.get_value().shape, dtype=T.config.floatX)) for p in params]
+	for p, g, a in zip(params, grads, acc):
+		new_a = rho * a + (1 - rho) * g ** 2
+		updates[a] = new_a
+		new_p = p - lr * g / TT.sqrt(new_a + epsilon)
+		updates[p] = new_p
 
-print 'Generating batch'
+	return updates
 
-g = GenBatch()
-tg = GenTestBatch()
+### RMSprop end
 
+tester = T.function([seq_len_scalar, imgs, starts, targets], [cost, bbox_seq], allow_input_downcast=True)
 
-#modify the Reshape in keras to Theano.reshape, that means reshape all dim include batch dim
-#Keras use None at batch dim, the loc_act and re2 is necessary 
-#PS. keras'reshape can't use at input, the loc_fc is necessary 
-model = MODELS.Graph()
-model.add_input(name='img_in', input_shape=(1, 100, 100))
-model.add_input(name='loc_in', input_shape=(seq_len-1, 4))
-model.add_node(CORE.TimeDistributedDense(10), name='loc_fc', input='loc_in')
-model.add_node(CORE.Activation('tanh'), name='loc_act', input='loc_fc')
-model.add_node(CORE.Reshape(dims=(batch_size, seq_len-1, 10)), name='re2', input='loc_act')
-model.add_node(CONV.Convolution2D(conv1_filters, conv1_filter_size, conv1_filter_size, subsample=(conv1_stride,conv1_stride), border_mode='valid', input_shape=(1, image_size, image_size)),name='conv1', input='img_in')
-#model.add_node(CONV.MaxPooling2D(pool_size=(pool1_size, pool1_size)), name='pool1', input='conv1')
-model.add_node(CORE.Activation(conv1_act), name='act1', input='conv1')
-#model.add_node(CORE.Flatten(), name='flat1', input='act1')
-model.add_node(CORE.Reshape(dims=(batch_size, seq_len-1, 32*19*19)), name='re1', input='act1')
-model.add_node(CORE.TimeDistributedDense(fc1_size), name='fc1', input='re1')
-model.add_node(CORE.Activation(fc1_act), name='act2', input='fc1')
-model.add_node(RECURRENT.GRU(gru1_size, return_sequences=True), name='gru1', inputs=['act2', 're2'])
-model.add_node(CORE.TimeDistributedDense(4), name='fc2', input='gru1')
-model.add_node(CORE.Activation(fc2_act), name='act3', input='fc2')
-model.add_output(name='output', input='act3')
+import cPickle
 
-#print 'Computing convolution output function'
+try:
+    f = open(model_name, "rb")
+    param_saved = cPickle.load(f)
+    for _p, p in zip(params, param_saved):
+        _p.set_value(p)
+except IOError:
+    pass
 
-#conv1_out = T.function([model.get_input()], model.layers[2].get_output(train=False))
+print 'Generating dataset'
 
+from data_handler_n import *
 
-print 'Compiling model'
+print 'START'
 
-opt = OPT.Adam(lr=1e-3)
-
-model.compile(opt, {'output':'mse'})
-
-model.load_weights(figure_name+'-model')
-
-print 'Compiling finished'
-
-epoch = 12
-
-loss = []
-epoch_loss = []
-
-max_diff = []
-epoch_max_diff = []
-
-batch=0
-for test_data, test_label in tg:
-	batch += 1
-	data_piece = test_data[:,:-1]
-	label_piece = test_label[:,:-1]/(image_size/2.0)-1
-	loc_in = np.zeros((batch_size, seq_len-1, 4))
-	loc_in[:,0:1,:]=label_piece[:,0:1,:]
-	for t in xrange(seq_len-2):
-		print 'test_time_step=', t
-		pred = np.asarray(model.predict_on_batch({'img_in':np.reshape(data_piece, (batch_size*(seq_len-1), 1, image_size, image_size)),'loc_in':loc_in})[0])
-		loc_in[:,t+1:t+2,:]=pred[:, t:t+1,:]
-	pred = np.asarray(model.predict_on_batch({'img_in':np.reshape(data_piece, (batch_size*(seq_len-1), 1, image_size, image_size)),'loc_in':loc_in})[0])
-	predict_piece = pred
-	loss_piece = 0.5*((predict_piece-label_piece) **2 ).sum() / batch_size
-	left = (NP.max([predict_piece[:, :,0], label_piece[:, :,0]], axis=0) + 1) * (image_size / 2.0)
-	top = (NP.max([predict_piece[:, :,1], label_piece[:, :,1]], axis=0) + 1) * (image_size / 2.0)
-	right = (NP.min([predict_piece[:, :,2], label_piece[:, :,2]], axis=0) + 1) * (image_size / 2.0)
-	bottom = (NP.min([predict_piece[:, :,3], label_piece[:, :,3]], axis=0) + 1) * (image_size / 2.0)
-	intersect = (right - left) * ((right - left) > 0) * (bottom - top) * ((bottom - top) > 0)
-	label_real = (label_piece + 1) * (image_size / 2.0)
-	predict_real = (predict_piece + 1) * (image_size / 2.0)
-	label_area = (label_real[:, :,2] - label_real[:, :,0]) * ((label_real[:, :,2] - label_real[:, :,0]) > 0) * (label_real[:, :, 3] - label_real[:, :, 1]) * ((label_real[:, :, 3] - label_real[:, :, 1]) > 0)
-	predict_area = (predict_real[:, :,2] - predict_real[:, :,0]) * ((predict_real[:, :,2] - predict_real[:, :,0]) > 0) * (predict_real[:, :,3] - predict_real[:, :,1]) * ((predict_real[:, :,3] - predict_real[:, :,1]) > 0)
-	union = label_area + predict_area - intersect
-			
-	print 'Batch #', batch
-	print 'Predict:'
-	print predict_real
-	print 'Label:'
-	print label_real
-	print 'Loss:'
-	print loss_piece
-	print 'Intersection / Union:'
-	print np.mean(intersect / union, axis=0)
-	if batch>5:
-		break
-	
-
+try:
+        _iou = []
+	for i in range(0, 1):
+                train_cost = test_cost = 0
+		for j in range(0, 100):
+			_len = int(RNG.exponential(seq_len - 5) + 5) if variadic_length else seq_len
+			bmnist = BouncingMNIST(nr_objs, _len, batch_size, img_row, "test/inputs", "test/targets", acc=acc_scale, scale_range=zoom_scale, clutter_move = clutter_move, with_clutters = with_clutters, buff=False)
+			data, label = bmnist.GetBatch(count = 2 if double_mnist else 1)
+			data = data[:, :, NP.newaxis, :, :] / 255.0
+			label = label / (img_row / 2.) - 1.
+			cost, bbox_seq = tester(_len, data, label[:, 0, :], label)
+			left = NP.max([bbox_seq[:, :, 0], label[:, :, 0]], axis=0)
+			top = NP.max([bbox_seq[:, :, 1], label[:, :, 1]], axis=0)
+			right = NP.min([bbox_seq[:, :, 2], label[:, :, 2]], axis=0)
+			bottom = NP.min([bbox_seq[:, :, 3], label[:, :, 3]], axis=0)
+			intersect = (right - left) * ((right - left) > 0) * (bottom - top) * ((bottom - top) > 0)
+			label_area = (label[:, :, 2] - label[:, :, 0]) * (label[:, :, 2] - label[:, :, 0] > 0) * (label[:, :, 3] - label[:, :, 1]) * (label[:, :, 3] - label[:, :, 1] > 0)
+			predict_area = (bbox_seq[:, :, 2] - bbox_seq[:, :, 0]) * (bbox_seq[:, :, 2] - bbox_seq[:, :, 0] > 0) * (bbox_seq[:, :, 3] - bbox_seq[:, :, 1]) * (bbox_seq[:, :, 3] - bbox_seq[:, :, 1] > 0)
+			union = label_area + predict_area - intersect
+                        print i, j, cost
+                        print (label + 1) * (img_row / 2.)
+                        print (bbox_seq + 1) * (img_row / 2.)
+                        test_cost += cost
+			iou = intersect / union
+                        print iou
+			print NP.average(iou, axis=0)       # per frame
+			print NP.average(iou, axis=1)       # per batch
+                        _iou.append(NP.average(iou, axis=1))
+                print NP.average(_iou), '\t', NP.max(_iou), '\t', NP.min(_iou), '\t', NP.median(_iou), '\t', NP.std(_iou)
+except KeyboardInterrupt:
+        pass
