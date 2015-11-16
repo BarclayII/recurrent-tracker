@@ -214,8 +214,6 @@ class BouncingMNIST(object):
                         digit_image[10:, 10:] = self.Overlap(digit_image[10:, 10:], np.maximum.reduceat(np.maximum.reduceat(self.data_[np.random.randint(self.data_.shape[0])], np.cast[int](np.arange(0, 27, 1.5))), np.cast[int](np.arange(0, 27, 1.5)), axis=1))
                     else:
                         digit_image = self.data_[ind, :, :] / 255.0 * np.random.uniform(self.face_intensity_min, self.face_intensity_max)
-                    digit_image_nonzero = digit_image.nonzero()
-                    label_offset = np.array([digit_image_nonzero[0].min(), digit_image_nonzero[1].min(), digit_image_nonzero[0].max(), digit_image_nonzero[1].max()])
                     bak_digit_image = digit_image 
                     digit_size_ = self.digit_size_
                     for i in range(self.seq_length_):
@@ -234,6 +232,8 @@ class BouncingMNIST(object):
                             right  = left + self.digit_size_
                             digit_size_ = self.digit_size_
                         digit_image = scale_image
+                    	digit_image_nonzero = digit_image.nonzero()
+                    	label_offset = np.array([digit_image_nonzero[0].min(), digit_image_nonzero[1].min(), digit_image_nonzero[0].max(), digit_image_nonzero[1].max()])
  
                         wy=window_y[i, j]
                         wx=window_x[i, j]
