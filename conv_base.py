@@ -17,25 +17,20 @@ from matplotlib import pyplot as PL
 from getopt import *
 import sys
 
-###
-### Arguments to train *MY* baseline:
-### --no-pool1 --conv1_stride=5 --conv1_filters=32 --conv1_filter_size=10 --conv1_act=tanh --fc2_act=tanh
-###
-
 print 'Building model'
 
-seq_len = 5
+seq_len = 20
 prev_frames = 4
 image_size = 100
-batch_size = 16
+batch_size = 32
 epoch_size = 2000
-nr_epochs = 50
+nr_epochs = 37
 
 conv1 = True
 conv1_filters = 32
 conv1_filter_size = 10
 conv1_act = 'tanh'
-conv1_stride = 5
+conv1_stride = 1
 
 pool1 = True
 pool1_size = 4
@@ -45,15 +40,23 @@ conv2_filter_size = 9
 conv2_act = 'tanh'
 pool2_size = 2
 
-fc1_size = 86
+fc1_size = 256
 fc1_act = 'tanh'
 
 fc2_act = 'tanh'
 
 figure_name = 'loss'
 
+acc_scale = 0
+zoom_scale = 0
+double_mnist = False
+dataset = "train"
+
+with_clutters = 1
+clutter_move = 0.5
+
 try:
-	opts, args = getopt(sys.argv[1:], "", ["no-conv1", "no-pool1", "conv1_filters=", "conv1_filter_size=", "conv1_act=", "pool1_size=", "conv1_stride=", "fc1_act=", "fc2_act="])
+	opts, args = getopt(sys.argv[1:], "", ["no-conv1", "no-pool1", "conv1_filters=", "conv1_filter_size=", "conv1_act=", "pool1_size=", "conv1_stride=", "fc1_act=", "fc2_act=", "acc_scale=", "zoom_scale=", "double_mnist", "dataset="])
 	for opt in opts:
 		if opt[0] == "--no-conv1":
 			conv1 = False
@@ -73,41 +76,46 @@ try:
 			fc1_act = opt[1]
 		elif opt[0] == "--fc2_act":
 			fc2_act = opt[1]
+		elif opt[0] == "--acc_scale":
+			acc_scale = float(opt[1])
+		elif opt[0] == "--zoom_scale":
+			zoom_scale = float(opt[1])
+		elif opt[0] == "--double_mnist":
+			double_mnist = True
+		elif opt[0] == "--dataset":
+			dataset_name = opt[1]
 	if len(args) > 0:
 		figure_name = args[0]
 except:
 	pass
 
+conv_model = MODELS.Sequential()
+loc_model = MODELS.Sequential()
 model = MODELS.Sequential()
 
 if conv1:
-	model.add(CONV.Convolution2D(conv1_filters, conv1_filter_size, conv1_filter_size, subsample=(conv1_stride,conv1_stride), border_mode='valid', input_shape=(prev_frames, image_size, image_size)))
+	conv_model.add(CONV.Convolution2D(conv1_filters, conv1_filter_size, conv1_filter_size, subsample=(conv1_stride,conv1_stride), border_mode='valid', input_shape=(prev_frames, image_size, image_size)))
 	if pool1:
-		model.add(CONV.MaxPooling2D(pool_size=(pool1_size, pool1_size)))
-	model.add(CORE.Activation(conv1_act))
+		conv_model.add(CONV.MaxPooling2D(pool_size=(pool1_size, pool1_size)))
+	conv_model.add(CORE.Activation(conv1_act))
+	conv_model.add(CORE.Flatten())
+        conv_model.add(CORE.Dense(fc1_size))
+        conv_model.add(CORE.Activation(fc1_act))
+loc_model.add(CORE.Dense(fc1_size, input_shape=(4,)))
+loc_model.add(CORE.Activation(fc1_act))
 #model.add(CONV.Convolution2D(conv2_filters, conv2_filter_size, conv2_filter_size, border_mode='valid'))
 #model.add(CONV.MaxPooling2D(pool_size=(pool2_size, pool2_size)))
 #model.add(CORE.Activation(conv2_act))
-model.add(CORE.Flatten())
-model.add(CORE.Dense(fc1_size))
-model.add(CORE.Activation(fc1_act))
-model.add(CORE.Dense(4))
+model.add(CORE.Merge([conv_model, loc_model], mode='concat'))
+model.add(CORE.Dense(4, init='zero'))
 model.add(CORE.Activation(fc2_act))
-
-model.load_weights(figure_name+'-model')
-
-print 'Computing convolution output function'
-
-conv1_out = T.function([model.get_input()], model.layers[2].get_output(train=False))
 
 print 'Building bouncing MNIST generator'
 
-from data_handler import *
+from data_handler_n import *
 
-def GenBatch():
-	bmnist = BouncingMNIST(1, seq_len, batch_size, image_size, 'train/inputs')
-	while True:
-		yield bmnist.GetBatch()
+bmnist = BouncingMNIST(1, seq_len, batch_size, image_size, 'train/inputs', 'train/targets', clutter_size_max = 14, acc = acc_scale, scale_range = zoom_scale, with_clutters = with_clutters, clutter_move = clutter_move)
+bmnist_test = BouncingMNIST(1, seq_len, batch_size, image_size, 'test/inputs', 'test/targets', clutter_size_max = 14, acc = acc_scale, scale_range = zoom_scale, with_clutters = with_clutters, clutter_move = clutter_move)
 
 print 'Compiling model'
 
@@ -117,65 +125,94 @@ model.compile(opt, 'mse')
 
 print 'Generating batch'
 
-g = GenBatch()
-
 epoch = 0
 
 loss = []
 epoch_loss = []
+epoch_test_loss = []
 
-max_diff = []
-epoch_max_diff = []
+try:
+	model.load_weights(figure_name + '-model')
+except:
+	pass
 
 try:
 	while True:
 		epoch += 1
 		sample = 0
 		batch = 0
-		for data, label in g:
+		while True:
+			data, label = bmnist.GetBatch()
 			batch += 1
-			data_piece = data[:, 0:4]
-			label_piece = label[:, 4] / (image_size / 2.0) - 1
-			predict_piece = model.predict_on_batch(data_piece)
-			loss_piece = ((predict_piece - label_piece) ** 2).sum() / batch_size
-			max_diff_piece = NP.max(NP.abs(predict_piece - label_piece) * (image_size / 2.0))
-			left = (NP.max([predict_piece[:, 0], label_piece[:, 0]], axis=0) + 1) * (image_size / 2.0)
-			top = (NP.max([predict_piece[:, 1], label_piece[:, 1]], axis=0) + 1) * (image_size / 2.0)
-			right = (NP.min([predict_piece[:, 2], label_piece[:, 2]], axis=0) + 1) * (image_size / 2.0)
-			bottom = (NP.min([predict_piece[:, 3], label_piece[:, 3]], axis=0) + 1) * (image_size / 2.0)
-			intersect = (right - left) * ((right - left) > 0) * (bottom - top) * ((bottom - top) > 0)
-			label_real = (label_piece + 1) * (image_size / 2.0)
-			predict_real = (predict_piece + 1) * (image_size / 2.0)
-			label_area = (label_real[:, 2] - label_real[:, 0]) * ((label_real[:, 2] - label_real[:, 0]) > 0) * (label_real[:, 3] - label_real[:, 1]) * ((label_real[:, 3] - label_real[:, 1]) > 0)
-			predict_area = (predict_real[:, 2] - predict_real[:, 0]) * ((predict_real[:, 2] - predict_real[:, 0]) > 0) * (predict_real[:, 3] - predict_real[:, 1]) * ((predict_real[:, 3] - predict_real[:, 1]) > 0)
-			union = label_area + predict_area - intersect
+			_loss = 0
+			iou = NP.zeros((batch_size,))
+			for i in range(-3, data.shape[1] - 3):
+				data_piece = data[:, i:i + 4]
+				if data_piece.shape[1] == 0:
+					data_piece = NP.zeros(data[:, 0:4].shape)
+					data_piece[:, -i:4] = data[:, 0:i + 4]
+				prev_piece = label[:, 0 if i == -3 else (i + 2)] / (image_size / 2.0) - 1
+                                label_piece = label[:, i + 3] / (image_size / 2.0) - 1
+				predict_piece = model.predict_on_batch([data_piece, prev_piece])
+				loss_piece = ((predict_piece - label_piece) ** 2).sum() / batch_size
+				left = (NP.max([predict_piece[:, 0], label_piece[:, 0]], axis=0) + 1) * (image_size / 2.0)
+				top = (NP.max([predict_piece[:, 1], label_piece[:, 1]], axis=0) + 1) * (image_size / 2.0)
+				right = (NP.min([predict_piece[:, 2], label_piece[:, 2]], axis=0) + 1) * (image_size / 2.0)
+				bottom = (NP.min([predict_piece[:, 3], label_piece[:, 3]], axis=0) + 1) * (image_size / 2.0)
+				intersect = (right - left) * ((right - left) > 0) * (bottom - top) * ((bottom - top) > 0)
+				label_real = (label_piece + 1) * (image_size / 2.0)
+				predict_real = (predict_piece + 1) * (image_size / 2.0)
+				label_area = (label_real[:, 2] - label_real[:, 0]) * ((label_real[:, 2] - label_real[:, 0]) > 0) * (label_real[:, 3] - label_real[:, 1]) * ((label_real[:, 3] - label_real[:, 1]) > 0)
+				predict_area = (predict_real[:, 2] - predict_real[:, 0]) * ((predict_real[:, 2] - predict_real[:, 0]) > 0) * (predict_real[:, 3] - predict_real[:, 1]) * ((predict_real[:, 3] - predict_real[:, 1]) > 0)
+				union = label_area + predict_area - intersect
+				iou += intersect / union
+				_loss += loss_piece
+                                model.train_on_batch([data_piece, prev_piece], label_piece)
 			print 'Epoch #', epoch, 'Batch #', batch
-			print 'Predict:'
-			print predict_real
-			print 'Label:'
-			print label_real
 			print 'Loss:'
-			print loss_piece
-			print 'Max diff:'
-			print max_diff_piece
+			print _loss / 20
 			print 'Intersection / Union:'
-			print intersect / union
-			model.train_on_batch(data_piece, label_piece)
-			print 'Conv output:'
-			print conv1_out(data_piece)
-			loss.append(loss_piece)
-			epoch_loss.append(loss_piece)
-			max_diff.append(max_diff_piece)
-			epoch_max_diff.append(max_diff_piece)
+			print iou / 20, (iou / 20).mean(), NP.median(iou / 20)
+			loss.append(_loss / 20)
+			epoch_loss.append(_loss / 20)
+			data, label = bmnist_test.GetBatch()
+			_loss = 0
+			iou = NP.zeros((batch_size,))
+			for i in range(-3, data.shape[1] - 3):
+				data_piece = data[:, i:i + 4]
+				if data_piece.shape[1] == 0:
+					data_piece = NP.zeros(data[:, 0:4].shape)
+					data_piece[:, -i:4] = data[:, 0:i + 4]
+				prev_piece = label[:, 0 if i == -3 else (i + 2)] / (image_size / 2.0) - 1
+                                label_piece = label[:, i + 3] / (image_size / 2.0) - 1
+				predict_piece = model.predict_on_batch([data_piece, prev_piece])
+				loss_piece = ((predict_piece - label_piece) ** 2).sum() / batch_size
+				left = (NP.max([predict_piece[:, 0], label_piece[:, 0]], axis=0) + 1) * (image_size / 2.0)
+				top = (NP.max([predict_piece[:, 1], label_piece[:, 1]], axis=0) + 1) * (image_size / 2.0)
+				right = (NP.min([predict_piece[:, 2], label_piece[:, 2]], axis=0) + 1) * (image_size / 2.0)
+				bottom = (NP.min([predict_piece[:, 3], label_piece[:, 3]], axis=0) + 1) * (image_size / 2.0)
+				intersect = (right - left) * ((right - left) > 0) * (bottom - top) * ((bottom - top) > 0)
+				label_real = (label_piece + 1) * (image_size / 2.0)
+				predict_real = (predict_piece + 1) * (image_size / 2.0)
+				label_area = (label_real[:, 2] - label_real[:, 0]) * ((label_real[:, 2] - label_real[:, 0]) > 0) * (label_real[:, 3] - label_real[:, 1]) * ((label_real[:, 3] - label_real[:, 1]) > 0)
+				predict_area = (predict_real[:, 2] - predict_real[:, 0]) * ((predict_real[:, 2] - predict_real[:, 0]) > 0) * (predict_real[:, 3] - predict_real[:, 1]) * ((predict_real[:, 3] - predict_real[:, 1]) > 0)
+				union = label_area + predict_area - intersect
+				iou += intersect / union
+				_loss += loss_piece
+			print 'Epoch #', epoch, 'Batch #', batch
+			print 'Loss:'
+			print _loss / 20, (_loss / 20).mean(), NP.median(_loss / 20)
+			print 'Intersection / Union:'
+			print iou / 20, (iou / 20).mean(), NP.median(iou / 20)
+                        epoch_test_loss.append(_loss / 20)
 			if batch == epoch_size:
 				break
-		NP.save(str(epoch) + figure_name, epoch_loss)
-		NP.save(str(epoch) + figure_name + '-maxdiff', epoch_max_diff)
+                print 'Epoch average loss (train, test)', sum(epoch_loss) / epoch_size, sum(epoch_test_loss) / epoch_size
+                epoch_test_loss = []
 		epoch_loss = []
-		epoch_max_diff = []
+	        model.save_weights(figure_name + '-model' + str(epoch), overwrite=True)
 		if epoch == nr_epochs:
 			break
-finally:
-	NP.save(figure_name + '-maxdiff', max_diff)
-	NP.save(figure_name, loss)
+except KeyboardInterrupt:
 	model.save_weights(figure_name + '-model', overwrite=True)
+        pass
