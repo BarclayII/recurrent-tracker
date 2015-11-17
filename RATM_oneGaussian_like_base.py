@@ -267,7 +267,7 @@ from data_handler import *
 
 print 'START'
 
-bmnist = BouncingMNIST(nr_objs, _len, batch_size, img_row, dataset_name+"/inputs", dataset_name+"/targets", acc=acc_scale, scale_range=zoom_scale, clutter_move = clutter_move, with_clutters = with_clutters, buff=True)
+bmnist = BouncingMNIST(nr_objs, seq_len, batch_size, img_row, dataset_name+"/inputs", dataset_name+"/targets", acc=acc_scale, scale_range=zoom_scale, clutter_move = clutter_move, with_clutters = with_clutters, buff=True)
 try:
 	for i in range(0, 50):
 		for j in range(0, 2000):
@@ -291,9 +291,9 @@ try:
 			print i, j, cost
 			iou = intersect / union
 			print NP.average(iou, axis=1)
-    f = open(model_name + str(i), "wb")
+                f = open(model_name + str(i), "wb")
 		cPickle.dump(map(lambda x: x.get_value(), params), f)
-    f.close()
+                f.close()
 finally:
 	if not test:
 		f = open(model_name, "wb")
