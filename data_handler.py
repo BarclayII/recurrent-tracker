@@ -4,7 +4,7 @@ import scipy.ndimage as spn
 import os
 
 class BouncingMNIST(object):
-    def __init__(self, num_digits, seq_length, batch_size, image_size, dataset_name, target_name, scale_range=0, clutter_size_min = 5, clutter_size_max = 10, num_clutters = 20, face_intensity_min = 64, face_intensity_max = 255, run_flag='', acc=0, vel=1, buff=True, clutter_move=1, with_clutters=1):
+    def __init__(self, num_digits, seq_length, batch_size, image_size, dataset_name, target_name, scale_range=0, clutter_size_min = 5, clutter_size_max = 10, num_clutters = 20, face_intensity_min = 64, face_intensity_max = 255, run_flag='', acc=0, vel=1, buff=True, clutter_move=1, with_clutters=1, clutter_set='', **kwargs):
         self.seq_length_ = seq_length
         self.batch_size_ = batch_size
         self.image_size_ = image_size
@@ -35,14 +35,15 @@ class BouncingMNIST(object):
         self.acc_scale = acc
         self.vel_scale = vel
         np.random.shuffle(self.indices_)
-        self.num_clutterPack = 1000
-        self.clutterpack_exists=  os.path.exists('ClutterPack.hdf5')
+        self.num_clutterPack = 10000
+        self.clutter_set = clutter_set
+        self.clutterpack_exists=  os.path.exists('ClutterPackLarge'+clutter_set+'.hdf5')
         if not self.clutterpack_exists:
             self.InitClutterPack()
-        f = h5py.File('ClutterPack.hdf5', 'r')
+        f = h5py.File('ClutterPackLarge'+clutter_set+'.hdf5', 'r')
         self.clutterPack = f['clutterIMG'][:]
         self.buff_ptr = 0
-        self.buff_size = 200
+        self.buff_size = 2000
         self.buff_cap = 0
         self.buff_data = np.zeros((self.buff_size, self.seq_length_, self.image_size_, self.image_size_), dtype=np.float32)
         self.buff_label = np.zeros((self.buff_size, self.seq_length_, 4))
@@ -119,7 +120,7 @@ class BouncingMNIST(object):
 
     def Overlap(self, a, b):
         """ Put b on top of a."""
-        b = np.where(b > 32, b, 0)
+        b = np.where(b > (np.max(b) / 4), b, 0)
         t = min(np.shape(a))
         b = b[:t, :t]
         return np.select([b == 0, b != 0], [a, b])
@@ -135,7 +136,7 @@ class BouncingMNIST(object):
         clutterIMG = np.zeros((num_clutterPack, image_size_, image_size_))
         for i in xrange(num_clutterPack):
             clutterIMG[i] = self.GetClutter(image_size_, num_clutters_)
-        f = h5py.File('ClutterPack.hdf5', 'w')
+        f = h5py.File('ClutterPackLarge'+self.clutter_set+'.hdf5', 'w')
         f.create_dataset('clutterIMG', data=clutterIMG)
         f.close()
             
@@ -232,8 +233,8 @@ class BouncingMNIST(object):
                             right  = left + self.digit_size_
                             digit_size_ = self.digit_size_
                         digit_image = scale_image
-                    	digit_image_nonzero = digit_image.nonzero()
-                    	label_offset = np.array([digit_image_nonzero[0].min(), digit_image_nonzero[1].min(), digit_image_nonzero[0].max(), digit_image_nonzero[1].max()])
+                        digit_image_nonzero = np.where(digit_image > (np.max(digit_image) / 4), digit_image, 0).nonzero()
+                        label_offset = np.array([digit_image_nonzero[0].min(), digit_image_nonzero[1].min(), digit_image_nonzero[0].max(), digit_image_nonzero[1].max()])
  
                         wy=window_y[i, j]
                         wx=window_x[i, j]
