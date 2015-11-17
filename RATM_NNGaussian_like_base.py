@@ -84,6 +84,10 @@ zoom_scale = 0
 double_mnist = False
 NUM_N = 5
 dataset_name = "train"
+
+nr_objs = 1
+clutter_move = 1
+with_clutters = 1
 ### CONFIGURATION END
 
 ### getopt begin
@@ -92,7 +96,7 @@ import sys
 
 try:
 	opts, args = getopt(sys.argv[1:], "", ["batch_size=", "conv1_nr_filters=", "conv1_filter_size=", "conv1_stride=", "img_size=", "gru_dim=", "seq_len=", "use_cudnn", "zero_tail_fc", "var_len", "test", "acc_scale=",
-		"zoom_scale=", "dataset=", "double_mnist"])
+		"zoom_scale=", "dataset=", "double_mnist", "nr_objs=", "clutter_static", "without_clutters"])
 	for opt in opts:
 		if opt[0] == "--batch_size":
 			batch_size = int(opt[1])
@@ -128,6 +132,12 @@ try:
 			double_mnist = True
 		elif opt[0] == "--dataset":
 			dataset_name = opt[1]
+                elif opt[0] == "--nr_objs":
+                        nr_objs = int(opt[1])
+                elif opt[0] == "--clutter_static":
+                        clutter_move = 0
+		elif opt[0] == "--without_clutters":
+			with_clutters = 0
 	if len(args) > 0:
 		model_name = args[0]
 except:
@@ -264,7 +274,7 @@ from data_handler import *
 
 print 'START'
 
-bmnist = BouncingMNIST(1, seq_len, batch_size, img_row, dataset_name+"/inputs", dataset_name+"/targets", acc=acc_scale, scale_range=zoom_scale)
+bmnist = BouncingMNIST(nr_objs, _len, batch_size, img_row, dataset_name+"/inputs", dataset_name+"/targets", acc=acc_scale, scale_range=zoom_scale, clutter_move = clutter_move, with_clutters = with_clutters, buff=True)
 try:
 	for i in range(0, 50):
 		for j in range(0, 2000):
@@ -289,6 +299,9 @@ try:
 			print i, j, cost
 			iou = intersect / union
 			print NP.average(iou, axis=1)
+    f = open(model_name + str(i), "wb")
+		cPickle.dump(map(lambda x: x.get_value(), params), f)
+    f.close()
 finally:
 	if not test:
 		f = open(model_name, "wb")
